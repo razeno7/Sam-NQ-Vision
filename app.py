@@ -1,175 +1,147 @@
 import streamlit as st
 import yfinance as yf
-import plotly.graph_objects as go
 import pandas as pd
 import numpy as np
-from datetime import datetime
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from datetime import datetime, timedelta
 
-# --- SAM NQ VISION | PROFESSIONAL TERMINAL ---
-st.set_page_config(
-    page_title="Sam NQ Vision - Terminal Pro",
-    page_icon="🎯",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# --- SAM TERMINAL PRO CONFIG ---
+st.set_page_config(page_title="SAM TERMINAL PRO", layout="wide", initial_sidebar_state="collapsed")
 
-# Custom Bloomberg Terminal Styling
+# CSS INJECTION POUR LOOK BLOOMBERG RETRO-MODERNE
 st.markdown("""
 <style>
-    /* Global Background */
-    .stApp { background-color: #000000; color: #d1d1d1; }
+    .stApp { background-color: #000000; color: #d1d1d1; font-family: 'Courier New', monospace; }
+    [data-testid="stHeader"] { background: #000000; }
+    .main .block-container { padding: 1rem; max-width: 100%; }
     
-    /* Sidebar styling */
-    section[data-testid="stSidebar"] {
-        background-color: #050505;
-        border-right: 1px solid #333;
-    }
-    
-    /* Metrics */
+    /* Metrics Bloomberg Style */
     div[data-testid="stMetric"] {
-        background-color: #0a0a0a;
-        border: 1px solid #222;
-        padding: 10px;
-        border-radius: 4px;
+        background-color: #050505;
+        border-left: 3px solid #fbbf24;
+        padding: 5px 10px;
+        margin-bottom: 5px;
     }
-    div[data-testid="stMetricValue"] {
+    div[data-testid="stMetricValue"] { font-size: 1.2rem !important; color: #fbbf24 !important; }
+    div[data-testid="stMetricDelta"] { font-size: 0.8rem !important; }
+
+    /* Tables */
+    .stDataFrame { border: 1px solid #222; font-size: 0.8rem; }
+    
+    /* Input */
+    .stTextInput input {
+        background-color: #0a0a0a !important;
         color: #00ff00 !important;
+        border: 1px solid #333 !important;
         font-family: 'Courier New', monospace !important;
-        font-weight: bold;
     }
     
-    /* Dataframe styling */
-    .stDataFrame { border: 1px solid #222; }
-    
-    /* Headers */
-    h1, h2, h3 { 
-        color: #fbbf24 !important; 
-        font-family: 'Courier New', monospace;
-        letter-spacing: -1px;
-    }
+    /* Sidebar */
+    [data-testid="stSidebar"] { background-color: #050505; border-right: 1px solid #222; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- CORE DATA ENGINE ---
+# --- DATA ENGINE ---
 @st.cache_data(ttl=60)
-def get_terminal_data(ticker, period="1mo", interval="1h"):
+def fetch_data(ticker, period="1mo", interval="1h"):
     try:
         data = yf.download(ticker, period=period, interval=interval, progress=False)
-        if data.empty: return None
-        # Fix yfinance MultiIndex bug
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
         return data
-    except Exception as e:
-        st.error(f"ENGINE ERROR: {e}")
-        return None
+    except: return None
 
-def compute_indicators(df):
+def add_indicators(df):
+    # Bollinger Bands
+    df['MA20'] = df['Close'].rolling(20).mean()
+    df['STD20'] = df['Close'].rolling(20).std()
+    df['Upper'] = df['MA20'] + (df['STD20'] * 2)
+    df['Lower'] = df['MA20'] - (df['STD20'] * 2)
     # RSI
     delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-    # MA
-    df['MA20'] = df['Close'].rolling(window=20).mean()
-    df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    df['RSI'] = 100 - (100 / (1 + (gain/loss)))
+    # MACD
+    df['EMA12'] = df['Close'].ewm(span=12).mean()
+    df['EMA26'] = df['Close'].ewm(span=26).mean()
+    df['MACD'] = df['EMA12'] - df['EMA26']
+    df['Signal'] = df['MACD'].ewm(span=9).mean()
     return df
 
-# --- SIDEBAR NAV ---
-with st.sidebar:
-    st.markdown("# 🖥️ SAM VISION")
-    st.markdown("---")
-    
-    mode = st.radio("FUNCTION", ["📊 Terminal", "🗺️ Heatmap", "📡 News Feed"])
-    
-    st.markdown("---")
-    tickers = {
-        "NQ1! (Nasdaq)": "NQ=F",
-        "AAPL (Apple)": "AAPL",
-        "NVDA (Nvidia)": "NVDA",
-        "TSLA (Tesla)": "TSLA",
-        "BTC (Bitcoin)": "BTC-USD",
-        "DXY (USD Index)": "DX-Y.NYB"
-    }
-    selected_asset = st.selectbox("SECURITY", list(tickers.keys()))
-    ticker_sym = tickers[selected_asset]
-    
-    tf = st.selectbox("TIMEFRAME", ["15m", "1h", "1d"], index=1)
-    range_val = st.selectbox("RANGE", ["5d", "1mo", "6mo", "1y"], index=1)
-    
-    if st.button("🔄 REFRESH SYSTEM"):
-        st.cache_data.clear()
-        st.rerun()
+# --- HEADER / COMMAND BAR ---
+col_cmd, col_time = st.columns([4, 1])
+with col_cmd:
+    cmd = st.text_input("COMMAND", value="NQ=F", help="Enter Ticker (e.g. AAPL, NVDA, BTC-USD)")
+with col_time:
+    st.write(f"**SYSTEM TIME**\n{datetime.now().strftime('%H:%M:%S')}")
 
-# --- MAIN RENDER ---
-if mode == "📊 Terminal":
-    df = get_terminal_data(ticker_sym, range_val, tf)
-    
+# --- MAIN INTERFACE ---
+c_left, c_main, c_right = st.columns([1.5, 5, 1.5])
+
+# LEFT: MARKET WATCH
+with c_left:
+    st.caption("WATCHLIST")
+    watch_tickers = {"NQ": "NQ=F", "ES": "ES=F", "DXY": "DX-Y.NYB", "VIX": "^VIX", "10Y": "^TNX"}
+    for label, sym in watch_tickers.items():
+        d = fetch_data(sym, "2d", "1h")
+        if d is not None:
+            last = d['Close'].iloc[-1]
+            chg = ((last - d['Close'].iloc[0]) / d['Close'].iloc[0]) * 100
+            st.metric(label, f"{last:,.2f}", f"{chg:.2f}%")
+
+# CENTER: ADVANCED CHARTING
+with c_main:
+    df = fetch_data(cmd, "1mo", "1h")
     if df is not None:
-        df = compute_indicators(df)
+        df = add_indicators(df)
         
-        # Panel 1: Top Metrics
-        last = df['Close'].iloc[-1]
-        prev = df['Close'].iloc[-2]
-        chg = last - prev
-        chg_pct = (chg / prev) * 100
+        fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
+                           vertical_spacing=0.05, row_heights=[0.6, 0.2, 0.2])
         
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("LAST PRICE", f"{last:,.2f}", f"{chg:,.2f}")
-        c2.metric("CHANGE %", f"{chg_pct:.2f}%")
-        c3.metric("RSI (14)", f"{df['RSI'].iloc[-1]:.2f}")
-        c4.metric("VOL (PERIOD)", f"{df['Volume'].iloc[-1]:,.0f}")
+        # Price & Bollinger
+        fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], 
+                                   low=df['Low'], close=df['Close'], name="Price"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['Upper'], line=dict(color='gray', width=1, dash='dot'), name="Upper BB"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['Lower'], line=dict(color='gray', width=1, dash='dot'), name="Lower BB"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], line=dict(color='orange', width=1.5), name="MA20"), row=1, col=1)
         
-        # Panel 2: Interactive Chart
-        fig = go.Figure()
-        # Candlestick
-        fig.add_trace(go.Candlestick(
-            x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
-            name='Candles'
-        ))
-        # Indicators
-        fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], line=dict(color='#fbbf24', width=1), name='MA20'))
-        fig.add_trace(go.Scatter(x=df.index, y=df['EMA50'], line=dict(color='#3b82f6', width=1), name='EMA50'))
+        # Volume
+        colors = ['red' if row['Open'] - row['Close'] > 0 else 'green' for index, row in df.iterrows()]
+        fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name="Volume"), row=2, col=1)
         
-        fig.update_layout(
-            template='plotly_dark', height=600,
-            xaxis_rangeslider_visible=False,
-            margin=dict(l=0, r=0, t=20, b=0),
-            paper_bgcolor='black', plot_bgcolor='black'
-        )
+        # RSI
+        fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color='#00ff00', width=1.5), name="RSI"), row=3, col=1)
+        fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
+
+        fig.update_layout(template='plotly_dark', height=750, margin=dict(l=0,r=0,t=10,b=0),
+                         xaxis_rangeslider_visible=False, paper_bgcolor='black', plot_bgcolor='black')
         st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.error("INVALID TICKER OR ENGINE TIMEOUT")
+
+# RIGHT: TECHNICAL SUMMARY & MACRO
+with c_right:
+    st.caption("TECH SUMMARY")
+    if df is not None:
+        curr_rsi = df['RSI'].iloc[-1]
+        st.write(f"RSI: {curr_rsi:.1f}")
+        if curr_rsi > 70: st.error("OVERBOUGHT")
+        elif curr_rsi < 30: st.success("OVERSOLD")
+        else: st.info("NEUTRAL")
         
-        # Panel 3: Technicals & Data
-        st.markdown("### 📋 DATA ANALYSIS")
-        col_a, col_b = st.columns([2, 1])
-        with col_a:
-            st.dataframe(df.tail(10), use_container_width=True)
-        with col_b:
-            st.write("**Signals:**")
-            if df['RSI'].iloc[-1] > 70: st.error("⚠️ OVERBOUGHT")
-            elif df['RSI'].iloc[-1] < 30: st.success("🚀 OVERSOLD")
-            else: st.info("⏺️ NEUTRAL")
-
-elif mode == "🗺️ Heatmap":
-    st.header("NASDAQ 100 RELATIVE PERFORMANCE")
-    # Simulation d'un heatmap sectoriel
-    data = {
-        'Tech': np.random.uniform(-5, 5, 5),
-        'Finance': np.random.uniform(-5, 5, 5),
-        'Retail': np.random.uniform(-5, 5, 5)
-    }
-    st.write("Visualisation des flux de capitaux en temps réel...")
-    st.bar_chart(pd.DataFrame(data))
-
-else:
-    st.header("BREAKING NEWS FEED")
-    news_items = [
-        {"time": "14:50", "headline": "Fed's Daly: No urgency to adjust rates yet."},
-        {"time": "14:32", "headline": "Nvidia options volume hits record high for June expiration."},
-        {"time": "14:10", "headline": "European markets close higher as inflation cools."},
-        {"time": "13:55", "headline": "TSMC reports 20% jump in monthly revenue."}
-    ]
-    for n in news_items:
-        st.markdown(f"**{n['time']}** - {n['headline']}")
         st.divider()
+        st.caption("MAG 7 SNAPSHOT")
+        mag7 = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA"]
+        m7_data = []
+        for s in mag7:
+            tmp = fetch_data(s, "1d", "1d")
+            if tmp is not None:
+                m7_data.append({"Sym": s, "Price": f"{tmp['Close'].iloc[-1]:.2f}"})
+        st.table(pd.DataFrame(m7_data))
+
+# FOOTER
+st.markdown("---")
+st.caption("SAM TERMINAL V2.5 // DATA DELAYED 15M (FREE TIER) // [F1] HELP [F2] NEWS [F3] CHAT")
