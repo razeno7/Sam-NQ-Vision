@@ -1,85 +1,79 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
 
-# --- SAM TERMINAL PRO V4.0 ---
-st.set_page_config(page_title="SAM TERMINAL ELITE", layout="wide", initial_sidebar_state="collapsed")
+# --- BLOOMBERG TERMINAL V5 "ALPHA" ---
+st.set_page_config(page_title="BLOOMBERG ALPHA", layout="wide", initial_sidebar_state="collapsed")
 
-# BLOOMBERG BRUTALIST CSS
+# AUTHENTIC BLOOMBERG CSS INJECTION
 st.markdown("""
 <style>
     .stApp { background-color: #000000; color: #d1d1d1; font-family: 'Courier New', monospace; }
     [data-testid="stHeader"] { display: none; }
-    .main .block-container { padding: 0.5rem !important; max-width: 100% !important; }
+    .main .block-container { padding: 0.2rem !important; max-width: 100% !important; }
     
-    /* Metrics High Density */
-    div[data-testid="stMetric"] {
-        background-color: #050505;
-        border: 1px solid #222;
-        border-left: 3px solid #ffb000;
-        padding: 5px 10px;
-        margin: 2px 0;
+    /* Density Overrides */
+    div.stButton > button { 
+        background-color: #111; border: 1px solid #333; color: #00f0ff; 
+        font-size: 10px; padding: 2px 10px; border-radius: 0;
     }
-    div[data-testid="stMetricValue"] { font-size: 1.1rem !important; color: #ffffff !important; }
-    div[data-testid="stMetricLabel"] { font-size: 0.7rem !important; color: #666 !important; }
-    
-    /* Input */
-    .stTextInput input {
-        background-color: #000 !important;
-        color: #00f0ff !important;
-        border: 1px solid #333 !important;
-        font-family: 'Courier New', monospace !important;
-        font-weight: bold;
+    div.stTabs [data-baseweb="tab-list"] { gap: 1px; background-color: #222; }
+    div.stTabs [data-baseweb="tab"] { 
+        background-color: #111; color: #00f0ff; font-size: 10px; padding: 5px 15px; border-radius: 0;
     }
+    div.stTabs [aria-selected="true"] { background-color: #00f0ff !important; color: #000 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ENGINE: DATA FETCHING
+# ENGINE: SECURITY DATA
 @st.cache_data(ttl=60)
-def get_data(ticker, period="1mo"):
-    data = yf.download(ticker, period=period, interval="1h", progress=False)
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.get_level_values(0)
-    return data
+def get_security_data(ticker):
+    t = yf.Ticker(ticker)
+    info = t.info
+    hist = t.history(period="1mo")
+    return info, hist
 
-# UI: TOP BAR
-c1, c2 = st.columns([5, 1])
-with c1:
-    ticker = st.text_input("COMMAND", value="NQ=F").upper()
-with c2:
-    st.markdown(f"**V4.0 PRO**\n{datetime.now().strftime('%H:%M:%S')}")
+# UI: TOP COMMAND BAR
+col_cmd, col_time = st.columns([6, 1])
+with col_cmd:
+    cmd = st.text_input("COMMAND", value="TSLA US").upper()
+with col_time:
+    st.markdown(f"**V5-ALPHA**\n{datetime.now().strftime('%H:%M:%S')}")
 
-# UI: MAIN QUADRANTS
-col_side, col_main = st.columns([1, 4])
+# UI: BLOOMBERG MENU TABS
+tab_gp, tab_des, tab_rv, tab_ee, tab_anr = st.tabs(["GP (Graph)", "DES (Desc)", "RV (Value)", "EE (Earn)", "ANR (Recs)"])
 
-with col_side:
-    st.caption("WATCHLIST")
-    for s in ["NQ=F", "DX-Y.NYB", "^VIX", "BTC-USD"]:
-        d = get_data(s, "1d")
-        if not d.empty:
-            st.metric(s.split('=')[0], f"{d['Close'].iloc[-1]:.2f}", f"{((d['Close'].iloc[-1]/d['Close'].iloc[0])-1)*100:.2f}%")
-
-with col_main:
-    df = get_data(ticker)
-    if not df.empty:
-        # COMPLEX SUBPLOTS
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                           vertical_spacing=0.02, row_heights=[0.8, 0.2])
-        
-        # Price & MA
-        fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], 
-                                   low=df['Low'], close=df['Close'], name="Price"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['Close'].rolling(20).mean(), line=dict(color='orange', width=1), name="MA20"), row=1, col=1)
-        
-        # Vol
-        fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name="Vol", marker_color='gray'), row=2, col=1)
-        
-        fig.update_layout(template='plotly_dark', height=700, margin=dict(l=0,r=0,t=0,b=0),
-                         xaxis_rangeslider_visible=False, paper_bgcolor='black', plot_bgcolor='black')
+try:
+    info, hist = get_security_data(cmd.split(' ')[0])
+    
+    with tab_gp:
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.8, 0.2])
+        fig.add_trace(go.Candlestick(x=hist.index, open=hist['Open'], high=hist['High'], low=hist['Low'], close=hist['Close']), row=1, col=1)
+        fig.add_trace(go.Bar(x=hist.index, y=hist['Volume'], marker_color='gray'), row=2, col=1)
+        fig.update_layout(template='plotly_dark', height=600, margin=dict(l=0,r=0,t=0,b=0), xaxis_rangeslider_visible=False)
         st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.error("TICKER ERROR")
+
+    with tab_des:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(f"### {info.get('longName', 'N/A')}")
+            st.write(info.get('longBusinessSummary', 'No description available.'))
+        with c2:
+            st.table(pd.DataFrame({
+                "Metric": ["Industry", "Sector", "CEO", "Mkt Cap"],
+                "Value": [info.get('industry'), info.get('sector'), info.get('fullTimeEmployees'), f"{info.get('marketCap', 0)/1e12:.2f}T"]
+            }))
+
+    with tab_rv:
+        st.caption("RELATIVE VALUATION vs INDUSTRY PEERS")
+        st.dataframe(pd.DataFrame({
+            "Ticker": [cmd, "AAPL", "MSFT", "GOOGL"],
+            "P/E": [info.get('trailingPE'), 28.4, 34.2, 22.1],
+            "Yield": [info.get('dividendYield'), 0.005, 0.007, 0]
+        }), use_container_width=True)
+
+except Exception as e:
+    st.error(f"SECURITY_ERROR: {str(e)}")
