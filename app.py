@@ -9,7 +9,7 @@ from datetime import datetime
 # --- CONFIGURATION DU PROJET ---
 st.set_page_config(
     layout="wide", 
-    page_title="Sam-NQ-Vision", # <--- NOM MIS À JOUR ICI
+    page_title="Sam-NQ-Vision",
     initial_sidebar_state="collapsed",
     page_icon="🦅"
 )
@@ -68,23 +68,27 @@ st.markdown("""
 
 @st.cache_data(ttl=60)
 def get_market_data(ticker="QQQ"):
-    df = yf.download(ticker, period="5d", interval="5m", progress=False)
-    
-    if df.empty:
-        return None
+    try:
+        # On force le téléchargement sans progress bar
+        df = yf.download(ticker, period="5d", interval="5m", progress=False)
+        
+        if df.empty:
+            return None
 
-    # Indicateurs Techniques
-    df['SMA_20'] = df['Close'].rolling(window=20).mean()
-    df['SMA_50'] = df['Close'].rolling(window=50).mean()
-    
-    # RSI
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-    
-    return df
+        # Indicateurs Techniques
+        df['SMA_20'] = df['Close'].rolling(window=20).mean()
+        df['SMA_50'] = df['Close'].rolling(window=50).mean()
+        
+        # RSI
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df['RSI'] = 100 - (100 / (1 + rs))
+        
+        return df
+    except Exception as e:
+        return None
 
 def get_rss_news():
     # Flux RSS Yahoo Finance
@@ -104,24 +108,31 @@ with st.sidebar:
     if st.button("CLEAR CACHE"):
         st.cache_data.clear()
 
-# 1. HEADER (Ligne du haut)
+# --- INITIALISATION DES VARIABLES (ANTI-CRASH) ---
+# C'est ici qu'on règle ton erreur NameError : on initialise tout à 0 par défaut
+current_price = 0.0
+daily_change = 0.0
+pct_change = 0.0
+rsi_now = 0.0
+data_available = False # Drapeau pour savoir si la data est là
+
+# 1. HEADER (Tentative de chargement)
 df = get_market_data(ticker_input)
 
-if df is not None:
+if df is not None and not df.empty:
+    data_available = True
     current_price = float(df['Close'].iloc[-1])
     open_price = float(df['Open'].iloc[0])
     daily_change = current_price - open_price
     pct_change = (daily_change / open_price) * 100
+    rsi_now = df['RSI'].iloc[-1]
     
+    # Affichage Header
     c1, c2, c3, c4 = st.columns([1, 1, 1, 3])
-    
     with c1: st.metric("LAST PRICE", f"{current_price:.2f}")
     with c2: st.metric("CHANGE", f"{daily_change:+.2f}", f"{pct_change:+.2f}%")
-    with c3: 
-        rsi_now = df['RSI'].iloc[-1]
-        st.metric("RSI (14)", f"{rsi_now:.1f}")
+    with c3: st.metric("RSI (14)", f"{rsi_now:.1f}")
     with c4:
-        # Ticker mis à jour avec le nom du projet
         st.markdown(f"""
         <div style='text-align:right; padding-top:10px;'>
         <span style='color:#FF9800; font-weight:bold; font-size:20px;'>SAM-NQ-VISION</span> 
@@ -130,7 +141,9 @@ if df is not None:
         </div>
         """, unsafe_allow_html=True)
 else:
-    st.error("DATA ERROR: Impossible de charger les données.")
+    # Header en mode Erreur (mais sans planter)
+    st.error(f"DATA FEED OFFLINE: Impossible de joindre Yahoo Finance pour {ticker_input}. Réessayez 'CLEAR CACHE' ou attendez.")
+    current_price = 0.0 # Valeur par défaut pour éviter le crash en bas
 
 st.markdown("---")
 
@@ -138,7 +151,7 @@ st.markdown("---")
 tab_chart, tab_news, tab_depth = st.tabs(["CHARTING [F1]", "NEWS WIRE [F2]", "LEVEL II [F3]"])
 
 with tab_chart:
-    if df is not None:
+    if data_available and df is not None:
         fig = make_subplots(
             rows=2, cols=1, 
             shared_xaxes=True, 
@@ -172,6 +185,8 @@ with tab_chart:
         fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#1a1a1a', side='right') 
 
         st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.markdown("<br><br><h3 style='text-align:center; color:#333'>WAITING FOR DATA...</h3>", unsafe_allow_html=True)
 
 with tab_news:
     st.markdown("### 📰 REAL-TIME NEWS WIRE")
@@ -187,16 +202,23 @@ with tab_news:
                 </a>
             </div>
             """, unsafe_allow_html=True)
+    else:
+        st.warning("News feed loading...")
 
 with tab_depth:
     st.markdown("### MARKET DEPTH (SIMULATION)")
-    c_bid, c_ask = st.columns(2)
-    with c_bid:
-        st.markdown("**BID**")
-        st.dataframe(pd.DataFrame({"SIZE": [5, 12, 4], "PRICE": [current_price-0.05, current_price-0.10, current_price-0.15]}), hide_index=True)
-    with c_ask:
-        st.markdown("**ASK**")
-        st.dataframe(pd.DataFrame({"PRICE": [current_price+0.05, current_price+0.10, current_price+0.15], "SIZE": [8, 20, 2]}), hide_index=True)
+    
+    # CORRECTION DU BUG ICI : On vérifie si le prix existe avant de calculer
+    if current_price > 0:
+        c_bid, c_ask = st.columns(2)
+        with c_bid:
+            st.markdown("**BID**")
+            st.dataframe(pd.DataFrame({"SIZE": [5, 12, 4], "PRICE": [current_price-0.05, current_price-0.10, current_price-0.15]}), hide_index=True)
+        with c_ask:
+            st.markdown("**ASK**")
+            st.dataframe(pd.DataFrame({"PRICE": [current_price+0.05, current_price+0.10, current_price+0.15], "SIZE": [8, 20, 2]}), hide_index=True)
+    else:
+        st.warning("Data offline: Cannot calculate Level II depth.")
 
 if st.button('REFRESH DATA ⟳'):
     st.rerun()
