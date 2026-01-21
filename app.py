@@ -51,11 +51,14 @@ st.markdown("""
 # --- 3. MOTEUR DE DONNÉES ---
 @st.cache_data(ttl=30)
 def get_data():
-    # On récupère le QQQ (Proxy NQ)
-    ticker = yf.Ticker("QQQ")
-    # Données intraday précises (1m ou 5m selon dispo)
-    df = ticker.history(period="1d", interval="5m")
-    return df
+    try:
+        # On récupère le QQQ (Proxy NQ)
+        ticker = yf.Ticker("QQQ")
+        # Données intraday précises (5m pour stabilité)
+        df = ticker.history(period="1d", interval="5m")
+        return df
+    except:
+        return pd.DataFrame() # Retourne vide si erreur
 
 def get_news():
     try:
@@ -69,7 +72,7 @@ def calculate_sentiment(df):
     # Algo simple de sentiment technique
     if df.empty: return "NEUTRAL", 50
     
-    # RSI
+    # RSI Calculation
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -78,15 +81,24 @@ def calculate_sentiment(df):
     current_rsi = rsi.iloc[-1]
     
     # SMA Trend
+    # On vérifie qu'on a assez de données pour calculer SMA 20
+    if len(df) < 20: return "NEUTRAL", 50
+    
     sma_short = df['Close'].rolling(5).mean().iloc[-1]
     sma_long = df['Close'].rolling(20).mean().iloc[-1]
     
     score = 50
-    if current_rsi > 70: score -= 20 (Overbought)
-    elif current_rsi < 30: score += 20 (Oversold)
     
-    if sma_short > sma_long: score += 20 # Bullish trend
-    else: score -= 20 # Bearish trend
+    # Correction de l'erreur précédente ici :
+    if current_rsi > 70: 
+        score -= 20 # Overbought condition
+    elif current_rsi < 30: 
+        score += 20 # Oversold condition
+    
+    if sma_short > sma_long: 
+        score += 20 # Bullish trend
+    else: 
+        score -= 20 # Bearish trend
     
     if score > 60: return "BULLISH", score
     elif score < 40: return "BEARISH", score
@@ -113,17 +125,16 @@ if not df.empty:
     with h4: st.metric("LOW", f"{df['Low'].min():.2f}")
     with h5: 
         sentiment, score = calculate_sentiment(df)
-        color = "green" if "BULL" in sentiment else "red" if "BEAR" in sentiment else "orange"
+        color = "#00ff00" if "BULL" in sentiment else "#ff0000" if "BEAR" in sentiment else "#ff9800"
         st.markdown(f"<div style='text-align:center'><small>ALGO SENTIMENT</small><br><b style='color:{color}'>{sentiment}</b></div>", unsafe_allow_html=True)
     with h6:
         st.markdown(f"<div style='text-align:right; color:#444; font-size:12px'>SYSTEM: ONLINE<br>LATENCY: 24ms<br>FEED: NASDAQ VIA YAHOO</div>", unsafe_allow_html=True)
 
-# B. MAIN GRID (Chart + Sidebar Data)
-c_main, c_side = st.columns([3, 1])
+    # B. MAIN GRID (Chart + Sidebar Data)
+    c_main, c_side = st.columns([3, 1])
 
-with c_main:
-    # GRAPHIQUE PRO (CANDLESTICK + VOLUME)
-    if not df.empty:
+    with c_main:
+        # GRAPHIQUE PRO (CANDLESTICK + VOLUME)
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.8, 0.2], vertical_spacing=0.02)
         
         # Candles
@@ -158,23 +169,22 @@ with c_main:
         
         st.plotly_chart(fig, use_container_width=True)
 
-with c_side:
-    st.markdown("**📡 NEWS WIRE**")
-    if news:
-        for n in news:
-            t = n.get('published', '')[17:22]
-            st.markdown(f"""
-            <div style='border-left: 2px solid #ff9800; padding-left: 8px; margin-bottom: 8px; font-size: 12px;'>
-                <span style='color:#666'>{t}</span> <a href='{n.link}' style='color:#ddd; text-decoration:none'>{n.title}</a>
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.info("No news feed.")
+    with c_side:
+        st.markdown("**📡 NEWS WIRE**")
+        if news:
+            for n in news:
+                t = n.get('published', '')[17:22]
+                st.markdown(f"""
+                <div style='border-left: 2px solid #ff9800; padding-left: 8px; margin-bottom: 8px; font-size: 12px;'>
+                    <span style='color:#666'>{t}</span> <a href='{n.link}' style='color:#ddd; text-decoration:none'>{n.title}</a>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("No news feed.")
 
-    st.markdown("---")
-    st.markdown("**📊 MARKET DEPTH (L2 SIM)**")
-    # Carnet d'ordre simulé pour l'effet visuel
-    if not df.empty:
+        st.markdown("---")
+        st.markdown("**📊 MARKET DEPTH (L2 SIM)**")
+        # Carnet d'ordre simulé pour l'effet visuel
         price = last_price
         l2_data = pd.DataFrame({
             "BID SIZE": [120, 450, 100],
@@ -183,6 +193,11 @@ with c_side:
             "ASK SIZE": [300, 150, 500]
         })
         st.dataframe(l2_data, hide_index=True, use_container_width=True)
+
+else:
+    # Ecran d'attente si pas de données (évite le crash)
+    st.warning("WAITING FOR MARKET DATA...")
+    st.info("If this persists, Yahoo Finance might be blocking the IP. Try again in 1 minute.")
 
 # Bouton discret pour refresh
 if st.button("SYNC TERMINAL"):
