@@ -5,278 +5,242 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import feedparser
-from textblob import TextBlob 
 from datetime import datetime, timedelta
 
-# --- 1. CONFIGURATION DU TERMINAL ---
+# --- 1. SETUP PAGE (WIDE MODE) ---
 st.set_page_config(
     layout="wide",
-    page_title="NQ SAM VISION [QUANT]",
-    page_icon="🦅",
+    page_title="BLOOMBERG NQ",
+    page_icon="terminal",
     initial_sidebar_state="collapsed"
 )
 
-# --- 2. CSS CUSTOM "BLOOMBERG QUANT" ---
+# --- 2. CSS "INSTITUTIONAL" (STYLE STRICT) ---
 st.markdown("""
     <style>
-    /* FOND NOIR ABSOLU */
-    .stApp {background-color: #050505;}
-    
-    /* TYPO TERMINAL */
-    * {font-family: 'Consolas', 'Courier New', monospace !important; font-size: 12px;}
-    
-    /* SUPPRESSION MARGES */
-    .block-container {padding-top: 0px !important; padding-left: 10px !important; padding-right: 10px !important;}
+    /* RESET TOTAL */
+    .stApp {background-color: #000000;}
+    .block-container {padding: 0px 5px !important; margin: 0px !important; max-width: 100% !important;}
     header, footer {display: none !important;}
     
-    /* COULEURS SEMANTIQUES */
-    .bull {color: #00FF00; font-weight: bold;}
-    .bear {color: #FF0000; font-weight: bold;}
-    .neutral {color: #FF9800; font-weight: bold;}
+    /* TYPOGRAPHIE TERMINAL */
+    * {font-family: 'Consolas', 'Menlo', 'Deja Vu Sans Mono', monospace !important; font-size: 11px; letter-spacing: -0.5px;}
     
-    /* PANELS */
-    .quant-panel {
-        background: #0e0e0e;
+    /* COULEURS */
+    .amber {color: #FF9800;}
+    .green {color: #00FF00;}
+    .red {color: #FF0000;}
+    .white {color: #E0E0E0;}
+    .dim {color: #666;}
+    
+    /* PANELS (BENTO BOX) */
+    .panel {
         border: 1px solid #333;
-        padding: 10px;
-        margin-bottom: 5px;
+        background: #0a0a0a;
+        margin-bottom: 2px;
+        height: 100%;
+        overflow: hidden;
     }
     .panel-header {
-        border-bottom: 1px solid #333;
+        background: #1a1a1a;
         color: #FF9800;
-        font-size: 11px;
+        padding: 2px 5px;
+        font-weight: bold;
+        border-bottom: 1px solid #333;
         text-transform: uppercase;
-        margin-bottom: 8px;
-        letter-spacing: 1px;
+        font-size: 10px;
     }
     
-    /* TABLES CUSTOM */
+    /* TABLEAUX COMPACTS */
     table {width: 100%; border-collapse: collapse;}
-    td, th {border-bottom: 1px solid #222; padding: 4px; color: #ddd;}
-    th {text-align: left; color: #666;}
+    th {text-align: left; color: #888; border-bottom: 1px solid #333; padding: 2px;}
+    td {padding: 1px 2px; border-bottom: 1px solid #111; color: #ddd;}
+    tr:hover {background-color: #111;}
     </style>
 """, unsafe_allow_html=True)
 
-# --- 3. MOTEUR D'ANALYSE (PYTHON BACKEND) ---
+# --- 3. DATA ENGINE ---
 
 @st.cache_data(ttl=60)
-def fetch_market_data():
-    # Récupération NQ + Macro
-    tickers = ["NQ=F", "QQQ", "^VIX", "BTC-USD", "^TNX"]
+def get_data_feed():
+    # Tickers: NQ, VIX, TNX, BTC, DXY, AAPL, NVDA
+    tickers = ["NQ=F", "QQQ", "^VIX", "^TNX", "BTC-USD", "DX-Y.NYB", "NVDA", "AAPL", "MSFT"]
     try:
         data = yf.download(tickers, period="5d", interval="15m", group_by='ticker', progress=False)
         return data
     except:
         return pd.DataFrame()
 
-def process_sentiment_nlp():
-    # C'EST ICI QUE L'IA ANALYSE LE TEXTE
-    rss_urls = [
-        "https://finance.yahoo.com/news/rssindex",
-        "http://feeds.marketwatch.com/marketwatch/topstories/"
-    ]
-    
-    news_items = []
-    total_polarity = 0
-    count = 0
-    
-    for url in rss_urls:
-        try:
-            feed = feedparser.parse(url)
-            for entry in feed.entries[:6]:
-                # Analyse de sentiment avec TextBlob
-                analysis = TextBlob(entry.title)
-                polarity = analysis.sentiment.polarity 
-                
-                # Classification
-                if polarity > 0.1: sent = "BULL"
-                elif polarity < -0.1: sent = "BEAR"
-                else: sent = "NEUT"
-                
-                news_items.append({
-                    "title": entry.title,
-                    "link": entry.link,
-                    "time": entry.published[17:22] if 'published' in entry else "LIVE",
-                    "score": polarity,
-                    "label": sent
-                })
-                total_polarity += polarity
-                count += 1
-        except: continue
-        
-    avg_score = (total_polarity / count) * 100 if count > 0 else 0
-    return news_items, avg_score
+def get_news_feed():
+    try:
+        feed = feedparser.parse("https://finance.yahoo.com/news/rssindex")
+        return feed.entries[:10]
+    except:
+        return []
 
-def calculate_quant_indicators(df):
-    if df.empty: return df
-    
-    # 1. VWAP
-    df['VWAP'] = (df['Volume'] * (df['High'] + df['Low'] + df['Close']) / 3).cumsum() / df['Volume'].cumsum()
-    
-    # 2. Bandes de Bollinger
-    df['SMA20'] = df['Close'].rolling(window=20).mean()
-    df['STD20'] = df['Close'].rolling(window=20).std()
-    df['Upper'] = df['SMA20'] + (2 * df['STD20'])
-    df['Lower'] = df['SMA20'] - (2 * df['STD20'])
-    
-    # 3. RSI
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-    
-    return df
+# --- 4. DATA PROCESSING ---
 
-# --- 4. DATA LOADING & PROCESSING ---
+raw = get_data_feed()
+news = get_news_feed()
 
-raw_data = fetch_market_data()
-news_data, sentiment_score = process_sentiment_nlp()
-
-# Sélection Intelligente NQ vs QQQ
-if not raw_data.empty and 'NQ=F' in raw_data and not raw_data['NQ=F']['Close'].dropna().empty:
-    main_df = raw_data['NQ=F'].dropna()
-    symbol_display = "NQ=F (FUTURES)"
-elif not raw_data.empty and 'QQQ' in raw_data:
-    main_df = raw_data['QQQ'].dropna()
-    symbol_display = "QQQ (PROXY)"
+# Fallback NQ
+if not raw.empty and 'NQ=F' in raw and not raw['NQ=F']['Close'].dropna().empty:
+    df_nq = raw['NQ=F'].dropna()
+    sym_name = "NQ=F (CME)"
+elif not raw.empty and 'QQQ' in raw:
+    df_nq = raw['QQQ'].dropna()
+    sym_name = "QQQ (PROXY)"
 else:
-    st.error("DATA FEED DISCONNECTED. REFRESH.")
+    st.error("NO DATA CONNECTION")
     st.stop()
 
-# Calcul des indicateurs
-df_tech = calculate_quant_indicators(main_df)
-current = df_tech.iloc[-1]
-prev = df_tech.iloc[-2]
-
-# --- 5. INTERFACE DASHBOARD ---
-
-# HEADER
-col_h1, col_h2, col_h3 = st.columns([2, 1, 1])
+# Calculs Tech
+df_nq['SMA20'] = df_nq['Close'].rolling(20).mean()
+df_nq['VWAP'] = (df_nq['Volume'] * (df_nq['High']+df_nq['Low']+df_nq['Close'])/3).cumsum() / df_nq['Volume'].cumsum()
+current = df_nq.iloc[-1]
+prev = df_nq.iloc[-2]
 chg = current['Close'] - prev['Close']
 pct = (chg / prev['Close']) * 100
-color_h = "#00FF00" if chg >= 0 else "#FF0000"
 
-with col_h1:
-    st.markdown(f"""
-    <div style='font-size: 24px; color: #FF9800; font-weight: bold;'>{symbol_display}</div>
-    <div style='font-size: 12px; color: #666;'>NQ SAM VISION // REALTIME QUANT ENGINE</div>
-    """, unsafe_allow_html=True)
+# --- 5. UI LAYOUT (GRID SYSTEM) ---
 
-with col_h2:
-    st.markdown(f"""
-    <div style='text-align:right'>
-        <div style='font-size: 32px; color: {color_h}; font-weight: bold;'>{current['Close']:,.2f}</div>
-        <div style='font-size: 14px; color: {color_h};'>{chg:+.2f} ({pct:+.2f}%)</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col_h3:
-    sent_col = "#00FF00" if sentiment_score > 5 else "#FF0000" if sentiment_score < -5 else "#FF9800"
-    st.markdown(f"""
-    <div style='background:#111; border:1px solid #333; padding:5px; text-align:center'>
-        <div style='color:#666; font-size:10px'>NEWS SENTIMENT (NLP)</div>
-        <div style='font-size:20px; font-weight:bold; color:{sent_col}'>{sentiment_score:.1f}</div>
-        <div style='font-size:10px; color:#aaa'>SCORE AI</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-st.markdown("---")
-
-# MAIN GRID
-c_left, c_main, c_right = st.columns([1, 3, 1])
-
-# --- GAUCHE : MACRO ---
-with c_left:
-    st.markdown('<div class="quant-panel"><div class="panel-header">MACRO CONTEXT</div>', unsafe_allow_html=True)
-    
+# A. TOP BAR (TICKER)
+col_t1, col_t2, col_t3 = st.columns([1, 4, 1])
+with col_t1:
+    st.markdown(f"<div style='color:#FF9800; font-size:16px; font-weight:bold; padding:5px;'>BLOOMBERG <span style='color:#fff'>TERMINAL</span></div>", unsafe_allow_html=True)
+with col_t2:
+    # Marquee simulé
     try:
-        vix = raw_data['^VIX']['Close'].iloc[-1]
-        tnx = raw_data['^TNX']['Close'].iloc[-1]
-        btc = raw_data['BTC-USD']['Close'].iloc[-1]
-        
+        vix = raw['^VIX']['Close'].iloc[-1]
+        tnx = raw['^TNX']['Close'].iloc[-1]
+        btc = raw['BTC-USD']['Close'].iloc[-1]
+        dxy = raw['DX-Y.NYB']['Close'].iloc[-1]
         st.markdown(f"""
-        <table>
-            <tr><td>VIX (FEAR)</td><td style='color:{"#f00" if vix > 20 else "#0f0"}; text-align:right'>{vix:.2f}</td></tr>
-            <tr><td>US 10Y</td><td style='color:#ddd; text-align:right'>{tnx:.3f}%</td></tr>
-            <tr><td>BITCOIN</td><td style='color:#FF9800; text-align:right'>${btc:,.0f}</td></tr>
-        </table>
+        <div style='display:flex; gap:20px; padding:8px; font-family:monospace;'>
+            <span>VIX: <span class='{'red' if vix>20 else 'green'}'>{vix:.2f}</span></span>
+            <span>US10Y: <span class='white'>{tnx:.3f}%</span></span>
+            <span>DXY: <span class='white'>{dxy:.2f}</span></span>
+            <span>BTC: <span class='amber'>${btc:,.0f}</span></span>
+        </div>
         """, unsafe_allow_html=True)
-    except:
-        st.write("Macro Data Loading...")
-    st.markdown('</div>', unsafe_allow_html=True)
+    except: st.write("LOADING MACRO...")
+with col_t3:
+    st.markdown(f"<div style='text-align:right; padding:5px; color:#444'>GATEWAY: <span style='color:#0f0'>CONNECTED</span></div>", unsafe_allow_html=True)
 
-    st.markdown('<div class="quant-panel"><div class="panel-header">TECHNICALS</div>', unsafe_allow_html=True)
+# B. MAIN WORKSPACE (3 COLUMNS)
+c1, c2, c3 = st.columns([1, 3, 1], gap="small")
+
+# --- LEFT PANEL: MONITOR & MACRO ---
+with c1:
+    # 1. SECURITY INFO
     st.markdown(f"""
-    <table>
-        <tr><td>RSI (14)</td><td style='text-align:right; color:{"#f00" if current['RSI']>70 else "#0f0" if current['RSI']<30 else "#fff"}'>{current['RSI']:.1f}</td></tr>
-        <tr><td>VWAP</td><td style='text-align:right; color:#FF9800'>{current['VWAP']:,.2f}</td></tr>
-        <tr><td>VOLATILITY</td><td style='text-align:right'>{(current['Upper']-current['Lower']):.2f}</td></tr>
-    </table>
+    <div class="panel">
+        <div class="panel-header">1) SECURITY MONITOR</div>
+        <div style="padding:5px;">
+            <div style="font-size:24px; color:{'#0f0' if chg>0 else '#f00'}; font-weight:bold;">{current['Close']:,.2f}</div>
+            <div style="font-size:14px; color:#ddd;">{chg:+.2f} ({pct:+.2f}%)</div>
+            <br>
+            <table>
+                <tr><td class="dim">OPEN</td><td style="text-align:right">{current['Open']:,.2f}</td></tr>
+                <tr><td class="dim">HIGH</td><td style="text-align:right">{current['High']:,.2f}</td></tr>
+                <tr><td class="dim">LOW</td><td style="text-align:right">{current['Low']:,.2f}</td></tr>
+                <tr><td class="dim">VOL</td><td style="text-align:right">{current['Volume']/1000:.0f}K</td></tr>
+                <tr><td class="dim">VWAP</td><td style="text-align:right; color:#FF9800">{current['VWAP']:,.2f}</td></tr>
+            </table>
+        </div>
+    </div>
     """, unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # 2. WATCHLIST
+    st.markdown('<div class="panel"><div class="panel-header">2) SECTOR WATCH (TECH)</div>', unsafe_allow_html=True)
+    html_wl = "<table><tr><th>TICKER</th><th>LAST</th><th>CHG%</th></tr>"
+    for t in ["NVDA", "AAPL", "MSFT"]:
+        try:
+            r = raw[t].dropna().iloc[-1]
+            p = raw[t].dropna().iloc[-2]
+            c = ((r['Close']-p['Close'])/p['Close'])*100
+            col = "#0f0" if c >= 0 else "#f00"
+            html_wl += f"<tr><td>{t}</td><td>{r['Close']:.2f}</td><td style='color:{col}'>{c:+.2f}%</td></tr>"
+        except: pass
+    html_wl += "</table></div>"
+    st.markdown(html_wl, unsafe_allow_html=True)
 
-# --- CENTRE : GRAPHIQUE PYTHON ---
-with c_main:
-    st.markdown('<div class="quant-panel">', unsafe_allow_html=True)
+# --- CENTER PANEL: CHART ---
+with c2:
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
     
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75, 0.25], vertical_spacing=0.02)
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.8, 0.2], vertical_spacing=0.0)
     
+    # Candles
     fig.add_trace(go.Candlestick(
-        x=df_tech.index, open=df_tech['Open'], high=df_tech['High'], low=df_tech['Low'], close=df_tech['Close'],
-        name='Price', increasing_line_color='#00FF00', decreasing_line_color='#FF0000'
+        x=df_nq.index, open=df_nq['Open'], high=df_nq['High'], low=df_nq['Low'], close=df_nq['Close'],
+        name="NQ", increasing_line_color='#00FF00', decreasing_line_color='#FF0000'
     ), row=1, col=1)
     
-    fig.add_trace(go.Scatter(x=df_tech.index, y=df_tech['VWAP'], line=dict(color='#FF9800', width=1, dash='dot'), name='VWAP'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df_tech.index, y=df_tech['Upper'], line=dict(color='#333', width=1), name='BB Up'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df_tech.index, y=df_tech['Lower'], line=dict(color='#333', width=1), fill='tonexty', fillcolor='rgba(255,255,255,0.05)', name='BB Low'), row=1, col=1)
+    # VWAP
+    fig.add_trace(go.Scatter(x=df_nq.index, y=df_nq['VWAP'], line=dict(color='#FF9800', width=1), name="VWAP"), row=1, col=1)
     
-    colors_vol = ['#00FF00' if c >= o else '#FF0000' for c, o in zip(df_tech['Close'], df_tech['Open'])]
-    fig.add_trace(go.Bar(x=df_tech.index, y=df_tech['Volume'], marker_color=colors_vol, name='Vol'), row=2, col=1)
+    # Vol
+    colors = ['#00FF00' if c >= o else '#FF0000' for c, o in zip(df_nq['Close'], df_nq['Open'])]
+    fig.add_trace(go.Bar(x=df_nq.index, y=df_nq['Volume'], marker_color=colors), row=2, col=1)
     
     fig.update_layout(
-        height=550,
-        margin=dict(l=0, r=50, t=10, b=0),
+        height=600,
+        margin=dict(l=0, r=40, t=20, b=0),
         template="plotly_dark",
-        paper_bgcolor='#0e0e0e',
-        plot_bgcolor='#0e0e0e',
+        paper_bgcolor="#0a0a0a",
+        plot_bgcolor="#0a0a0a",
         showlegend=False,
         xaxis_rangeslider_visible=False
     )
-    fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])], gridcolor='#222')
-    fig.update_yaxes(side='right', gridcolor='#222')
+    fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])], gridcolor="#222")
+    fig.update_yaxes(side="right", gridcolor="#222")
     
     st.plotly_chart(fig, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-# --- DROITE : NEWS NLP & AI ---
-with c_right:
-    st.markdown('<div class="quant-panel"><div class="panel-header">AI NEWS ANALYSIS</div>', unsafe_allow_html=True)
+# --- RIGHT PANEL: DATA & NEWS ---
+with c3:
+    # 3. NEWS WIRE
+    st.markdown('<div class="panel"><div class="panel-header">3) NEWS WIRE (REALTIME)</div>', unsafe_allow_html=True)
     
-    for item in news_data:
-        # CORRECTION DE L'ERREUR ICI : EXTRACTION DES VARIABLES
-        i_time = item['time']
-        i_label = item['label']
-        i_score = item['score']
-        i_link = item['link']
-        i_title = item['title']
-        
-        s_color = "#00FF00" if i_label == "BULL" else "#FF0000" if i_label == "BEAR" else "#888"
-        
-        st.markdown(f"""
-        <div style='border-bottom:1px solid #222; padding:8px 0;'>
-            <div style='font-size:10px; color:#FF9800; display:flex; justify-content:space-between;'>
-                <span>{i_time}</span>
-                <span style='color:{s_color}; font-weight:bold'>{i_label} ({i_score:.2f})</span>
-            </div>
-            <a href='{i_link}' target='_blank' style='color:#ccc; text-decoration:none; font-size:11px; display:block; margin-top:3px;'>
-                {i_title}
-            </a>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    st.markdown('</div>', unsafe_allow_html=True)
+    # CORRECTION SYNTAXE: Construction HTML propre
+    news_html = "<div style='height:200px; overflow-y:auto; padding:5px;'>"
+    for n in news[:6]:
+        t_time = n.published[17:22] if 'published' in n else "LIVE"
+        t_title = n.title[:50] + "..." if len(n.title) > 50 else n.title
+        news_html += f"<div style='border-bottom:1px solid #333; margin-bottom:4px;'>"
+        news_html += f"<span style='color:#FF9800'>[{t_time}]</span> <a href='{n.link}' target='_blank' style='color:#ddd; text-decoration:none'>{t_title}</a></div>"
+    news_html += "</div></div>"
+    st.markdown(news_html, unsafe_allow_html=True)
     
-    if st.button("RUN QUANT UPDATE"):
-        st.cache_data.clear()
-        st.rerun()
+    # 4. DEPTH OF MARKET (SIMULÉ POUR LE LOOK)
+    st.markdown('<div class="panel"><div class="panel-header">4) MARKET DEPTH (L2)</div>', unsafe_allow_html=True)
+    
+    l2_html = "<table><tr><th>BID SZ</th><th>BID</th><th>ASK</th><th>ASK SZ</th></tr>"
+    px = current['Close']
+    # Simulation L2
+    import random
+    for i in range(1, 6):
+        bid_px = px - (i*0.25)
+        ask_px = px + (i*0.25)
+        bid_sz = random.randint(1, 50)
+        ask_sz = random.randint(1, 50)
+        l2_html += f"<tr><td class='green'>{bid_sz}</td><td class='green'>{bid_px:,.2f}</td><td class='red'>{ask_px:,.2f}</td><td class='red'>{ask_sz}</td></tr>"
+    l2_html += "</table></div>"
+    st.markdown(l2_html, unsafe_allow_html=True)
+    
+    # 5. TIME & SALES (SIMULÉ)
+    st.markdown('<div class="panel"><div class="panel-header">5) TIME & SALES</div>', unsafe_allow_html=True)
+    ts_html = "<table><tr><th>TIME</th><th>PRICE</th><th>SIZE</th></tr>"
+    for i in range(5):
+        t_str = (datetime.now() - timedelta(seconds=i*2)).strftime("%H:%M:%S")
+        p_str = f"{px + random.uniform(-1, 1):.2f}"
+        s_str = random.randint(1, 10)
+        c_str = "green" if random.choice([True, False]) else "red"
+        ts_html += f"<tr><td class='dim'>{t_str}</td><td class='{c_str}'>{p_str}</td><td>{s_str}</td></tr>"
+    ts_html += "</table></div>"
+    st.markdown(ts_html, unsafe_allow_html=True)
+
+# Footer CMD
+st.text_input("CMD >", placeholder="Enter command...", label_visibility="collapsed")
