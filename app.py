@@ -7,300 +7,259 @@ import numpy as np
 import feedparser
 from datetime import datetime
 
-# --- 1. SETUP PAGE (MODE DASHBOARD) ---
+# --- 1. SETUP PAGE ---
 st.set_page_config(
     layout="wide",
-    page_title="Gorilla Terminal Clone",
+    page_title="Gorilla Terminal AI",
     page_icon="🦍",
     initial_sidebar_state="expanded"
 )
 
-# --- 2. CSS "MODERN SAAS" (STYLE GORILLA) ---
+# --- 2. CSS "GORILLA DARK MODE" ---
 st.markdown("""
     <style>
-    /* IMPORT FONTS MODERNE */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap');
+    /* FONTS */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
     
-    /* GLOBAL THEME */
+    /* THEME GLOBAL */
     .stApp {
-        background-color: #0b0f19 !important; /* Deep Blue/Black Gorilla Style */
-        color: #e2e8f0;
+        background-color: #0d1117 !important; /* Dark Blue-Black */
+        color: #c9d1d9;
         font-family: 'Inter', sans-serif;
     }
     
     /* SIDEBAR */
     section[data-testid="stSidebar"] {
-        background-color: #07090f;
-        border-right: 1px solid #1e293b;
+        background-color: #010409;
+        border-right: 1px solid #30363d;
     }
     
-    /* CARDS (WIDGETS) */
-    .g-card {
-        background-color: #111827;
-        border: 1px solid #1f2937;
-        border-radius: 12px;
-        padding: 20px;
-        margin-bottom: 20px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-    }
-    .g-card-header {
-        font-size: 14px;
-        font-weight: 600;
-        color: #94a3b8;
+    /* WIDGET CARD DESIGN */
+    .gorilla-card {
+        background-color: #161b22; /* Card BG */
+        border: 1px solid #30363d; /* Border */
+        border-radius: 8px;
+        padding: 15px;
         margin-bottom: 15px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    .card-header {
+        font-size: 11px;
+        font-weight: 600;
+        color: #8b949e;
         text-transform: uppercase;
-        letter-spacing: 0.05em;
+        margin-bottom: 10px;
         display: flex;
         justify-content: space-between;
         align-items: center;
     }
     
-    /* METRICS */
-    .g-metric-val { font-size: 28px; font-weight: 700; color: #fff; }
-    .g-metric-lbl { font-size: 12px; color: #64748b; }
-    .g-up { color: #10b981; } /* Emerald Green */
-    .g-down { color: #ef4444; } /* Rose Red */
+    /* METRICS STYLE */
+    .metric-value { font-size: 24px; font-weight: 600; color: #f0f6fc; }
+    .metric-delta-up { color: #3fb950; font-size: 12px; font-weight: 500; }
+    .metric-delta-dn { color: #f85149; font-size: 12px; font-weight: 500; }
     
-    /* AI CHAT BOX */
-    .ai-box {
-        background: #1e1b4b; /* Indigo tint */
-        border: 1px solid #4338ca;
+    /* AI CHAT STYLE */
+    .ai-bubble {
+        background: #1f6feb; /* Gorilla Blue */
+        color: white;
+        padding: 10px;
         border-radius: 8px;
-        padding: 15px;
-        font-size: 13px;
-        line-height: 1.5;
-        color: #c7d2fe;
+        font-size: 12px;
+        line-height: 1.4;
+        margin-top: 10px;
     }
     
     /* TABS */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 24px;
-        background-color: transparent;
-    }
-    .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        white-space: pre-wrap;
-        background-color: transparent;
-        border-radius: 4px;
-        color: #94a3b8;
-        font-weight: 600;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #1f2937;
-        color: #60a5fa; /* Blue accent */
-    }
+    .stTabs [data-baseweb="tab-list"] { border-bottom: 1px solid #30363d; }
+    .stTabs [data-baseweb="tab"] { color: #8b949e; border: none; font-size: 12px; }
+    .stTabs [aria-selected="true"] { color: #58a6ff; border-bottom: 2px solid #58a6ff; }
 
-    /* SEARCH BAR OVERRIDE */
-    .stTextInput input {
-        background-color: #1f2937 !important;
-        color: white !important;
-        border: 1px solid #374151 !important;
-        border-radius: 8px;
-    }
-    
-    /* HIDE STREAMLIT DECORATION */
+    /* HIDE ELEMENTS */
     header, footer, #MainMenu {visibility: hidden;}
-    .block-container {padding-top: 2rem;}
+    .block-container {padding-top: 1rem; padding-left: 1rem; padding-right: 1rem;}
     </style>
 """, unsafe_allow_html=True)
 
-# --- 3. DATA ENGINE ---
-@st.cache_data(ttl=60)
-def get_data(ticker):
-    try:
-        df = yf.download(ticker, period="1mo", interval="1h", progress=False)
-        info = yf.Ticker(ticker).info
-        return df, info
-    except: return pd.DataFrame(), {}
+# --- 3. ROBUST DATA ENGINE (FIX CRASH) ---
+@st.cache_data(ttl=300)
+def get_robust_data(ticker_input):
+    # Liste de tentatives : Ticker demandé -> QQQ (Proxy) -> SPY (Dernier recours)
+    attempts = [ticker_input, "QQQ", "SPY"]
+    
+    for t in attempts:
+        try:
+            # On essaie de télécharger
+            df = yf.download(t, period="5d", interval="15m", progress=False)
+            if not df.empty and len(df) > 10:
+                # Si ça marche, on récupère les infos et on retourne
+                try:
+                    info = yf.Ticker(t).info
+                except:
+                    info = {}
+                
+                # On force le nom d'affichage si c'est un proxy
+                display_name = ticker_input if t == ticker_input else f"{ticker_input} (via {t})"
+                return df, info, display_name
+        except:
+            continue
+            
+    return pd.DataFrame(), {}, "DATA OFFLINE"
 
-def get_news(ticker):
-    try:
-        # Simulation news feed intelligent
-        return feedparser.parse("https://finance.yahoo.com/news/rssindex").entries[:5]
-    except: return []
+def get_simulated_news():
+    # Simulation news pour éviter les blocages RSS
+    return [
+        {"title": "Fed Signals Potential Rate Cut as Inflation Cools", "time": "10m ago", "source": "Bloomberg"},
+        {"title": "Tech Stocks Rally on AI Chip Demand Surge", "time": "32m ago", "source": "Reuters"},
+        {"title": "Oil Prices Stabilize Amid Geopolitical Tensions", "time": "1h ago", "source": "CNBC"},
+        {"title": "Nasdaq 100 Futures Point to Higher Open", "time": "2h ago", "source": "WSJ"},
+    ]
 
-# --- 4. COMPOSANTS UI (WIDGETS) ---
-
-def metric_card(label, value, delta, is_currency=True):
-    color = "g-up" if delta >= 0 else "g-down"
-    arrow = "↑" if delta >= 0 else "↓"
+# --- 4. UI COMPONENTS ---
+def render_metric(label, value, pct_change, is_currency=True):
+    color = "metric-delta-up" if pct_change >= 0 else "metric-delta-dn"
+    sign = "+" if pct_change >= 0 else ""
     fmt_val = f"${value:,.2f}" if is_currency else f"{value:,.0f}"
-    st.markdown(f"""
-    <div class="g-card" style="padding: 15px;">
-        <div class="g-metric-lbl">{label}</div>
-        <div class="g-metric-val">{fmt_val}</div>
-        <div class="{color}" style="font-size: 12px; font-weight: 600; margin-top: 5px;">
-            {arrow} {abs(delta):.2f}%
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-def ai_insight_card(ticker, info, rsi):
-    # Simulation d'un insight généré par IA
-    sentiment = "BULLISH" if rsi < 30 else "BEARISH" if rsi > 70 else "NEUTRAL"
-    summary = info.get('longBusinessSummary', 'No data')[:150] + "..."
     
     st.markdown(f"""
-    <div class="g-card">
-        <div class="g-card-header">
-            <span>🦍 GORILLA AI INSIGHTS</span>
-            <span style="background:#4338ca; color:white; padding:2px 8px; border-radius:10px; font-size:10px;">BETA</span>
+    <div class="gorilla-card">
+        <div class="card-header">{label}</div>
+        <div class="metric-value">{fmt_val}</div>
+        <div class="{color}">{sign}{pct_change:.2f}%</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def render_ai_insight(symbol, rsi_val):
+    sentiment = "BULLISH" if rsi_val > 50 else "BEARISH"
+    st.markdown(f"""
+    <div class="gorilla-card">
+        <div class="card-header">
+            <span>🧠 GORILLA AI CO-PILOT</span>
+            <span style="color:#58a6ff">BETA</span>
         </div>
-        <div class="ai-box">
-            <b>ANALYSIS FOR {ticker}:</b><br><br>
-            • <b>Sentiment:</b> <span style="color:{'#10b981' if sentiment=='BULLISH' else '#ef4444'}">{sentiment}</span> based on technicals (RSI: {rsi:.1f}).<br>
-            • <b>Fundamental:</b> {summary}<br><br>
-            <i>"Based on current volatility, {ticker} shows strong support levels. AI suggests monitoring volume spikes in the next 4H session."</i>
+        <div style="font-size:12px; color:#c9d1d9;">
+            Analysing <b>{symbol}</b> market structure...
+        </div>
+        <div class="ai-bubble">
+            <b>AI VERDICT: {sentiment}</b><br>
+            RSI is currently at {rsi_val:.1f}. Volatility analysis suggests a potential breakout zone. 
+            Institutional flow detected on the buy-side.
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-# --- 5. LAYOUT PRINCIPAL ---
+# --- 5. MAIN APPLICATION ---
 
-# SIDEBAR NAVIGATION
+# SIDEBAR
 with st.sidebar:
-    st.markdown("### 🦍 GorillaTerm")
-    st.markdown("---")
-    menu = st.radio("MENU", ["Dashboard", "Supply Chain", "Financials", "Macro Data"], label_visibility="collapsed")
-    st.markdown("---")
-    st.caption("WATCHLIST")
-    st.markdown("**NQ=F** `+1.2%`", unsafe_allow_html=True)
-    st.markdown("**AAPL** `-0.5%`", unsafe_allow_html=True)
-    st.markdown("**NVDA** `+2.4%`", unsafe_allow_html=True)
+    st.markdown("### 🦍 GORILLA")
+    st.text_input("Global Search...", value="NQ=F")
     
-    st.markdown("<div style='margin-top: auto; padding-top: 50px; color: #64748b; font-size: 11px;'>v2.4.0 PRO</div>", unsafe_allow_html=True)
-
-# TOP BAR (SEARCH)
-c1, c2 = st.columns([3, 1])
-with c1:
-    search_ticker = st.text_input("Search Ticker (e.g., NQ=F, AAPL, BTC-USD)", value="NQ=F", label_visibility="collapsed", placeholder="Search assets, data, or ask AI...")
-with c2:
-    st.markdown("<div style='text-align:right; padding-top:10px; color:#94a3b8;'><b>CONNECTED</b> ●</div>", unsafe_allow_html=True)
-
-# CHARGEMENT DATA
-data, info = get_data(search_ticker)
-
-if not data.empty:
-    current_price = data['Close'].iloc[-1]
-    prev_close = data['Close'].iloc[-2]
-    pct_chg = ((current_price - prev_close) / prev_close) * 100
+    st.markdown("---")
+    st.markdown("**DASHBOARD**")
+    st.markdown("MARKETS")
+    st.markdown("NEWS")
+    st.markdown("SCREENER")
     
-    # Calcul RSI
-    delta = data['Close'].diff()
+    st.markdown("---")
+    st.caption("MY WATCHLIST")
+    st.markdown("🟢 **NQ=F** 18,240")
+    st.markdown("🔴 **ES=F** 5,120")
+    st.markdown("🟢 **BTC** 64,000")
+
+# MAIN CONTENT
+# Top Bar
+t1, t2 = st.columns([3, 1])
+with t1:
+    target_ticker = "NQ=F" # Par défaut
+    st.markdown(f"## {target_ticker} / NASDAQ 100 FUTURES")
+with t2:
+    st.markdown("<div style='text-align:right; color:#3fb950'>● CONNECTED</div>", unsafe_allow_html=True)
+
+# Fetch Data (Robust)
+df, info, display_name = get_robust_data(target_ticker)
+
+if not df.empty:
+    # Calculations
+    curr = df['Close'].iloc[-1]
+    prev = df['Close'].iloc[-2]
+    chg = ((curr - prev) / prev) * 100
+    
+    # RSI
+    delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
     rs = gain / loss
     rsi = 100 - (100 / (1 + rs))
     last_rsi = rsi.iloc[-1]
 
-    # --- CONTENU DES ONGLETS ---
-    
-    if menu == "Dashboard":
-        # ROW 1: METRICS
-        m1, m2, m3, m4 = st.columns(4)
-        with m1: metric_card("CURRENT PRICE", current_price, pct_chg)
-        with m2: metric_card("MARKET CAP", info.get('marketCap', 0), 0)
-        with m3: metric_card("VOLUME (24H)", data['Volume'].sum(), 5.2, False)
-        with m4: metric_card("P/E RATIO", info.get('trailingPE', 0), -1.2, False)
+    # --- TABS LAYOUT (Like Gorilla) ---
+    tab1, tab2, tab3 = st.tabs(["TERMINAL", "FUNDAMENTALS", "SUPPLY CHAIN"])
+
+    with tab1:
+        # ROW 1: KEY METRICS
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: render_metric("LAST PRICE", curr, chg)
+        with c2: render_metric("VOLUME (24H)", df['Volume'].sum(), 12.5, False)
+        with c3: render_metric("AVG TRUE RANGE", 45.20, -2.1, False) # Simulated
+        with c4: render_metric("RELATIVE VOL", 1.2, 5.4, False) # Simulated
+
+        # ROW 2: CHART + AI SIDEBAR
+        col_main, col_side = st.columns([3, 1])
         
-        # ROW 2: CHART & AI (The "Gorilla" Layout)
-        c_chart, c_ai = st.columns([2, 1])
-        
-        with c_chart:
-            st.markdown(f"<div class='g-card' style='height: 500px;'>", unsafe_allow_html=True)
-            # Chart Plotly Pro
-            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75, 0.25], vertical_spacing=0.05)
-            fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name="Price", increasing_line_color='#10b981', decreasing_line_color='#ef4444'), row=1, col=1)
-            fig.add_trace(go.Bar(x=data.index, y=data['Volume'], marker_color='#374151', name="Vol"), row=2, col=1)
+        with col_main:
+            st.markdown(f"<div class='gorilla-card' style='height:500px'>", unsafe_allow_html=True)
+            # Chart Plotly
+            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75, 0.25], vertical_spacing=0.0)
+            fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="Price", increasing_line_color='#3fb950', decreasing_line_color='#f85149'), row=1, col=1)
+            fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color='#30363d', showlegend=False), row=2, col=1)
             
             fig.update_layout(
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                margin=dict(l=10, r=10, t=10, b=10),
-                height=450,
-                showlegend=False,
-                xaxis_rangeslider_visible=False
+                height=460, margin=dict(l=10, r=10, t=30, b=10),
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                xaxis_rangeslider_visible=False, showlegend=False,
+                font=dict(color="#8b949e")
             )
-            fig.update_xaxes(showgrid=True, gridcolor='#1f2937')
-            fig.update_yaxes(showgrid=True, gridcolor='#1f2937', side='right')
+            fig.update_xaxes(gridcolor='#21262d')
+            fig.update_yaxes(side='right', gridcolor='#21262d')
             st.plotly_chart(fig, use_container_width=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-        with c_ai:
-            # Module AI Insight (Spécifique Gorilla)
-            ai_insight_card(search_ticker, info, last_rsi)
+        with col_side:
+            render_ai_insight(display_name, last_rsi)
             
-            # Module News Compact
-            st.markdown("<div class='g-card'><div class='g-card-header'>LATEST NEWS</div>", unsafe_allow_html=True)
-            news = get_news(search_ticker)
+            # News Widget
+            st.markdown("<div class='gorilla-card'><div class='card-header'>LIVE WIRE</div>", unsafe_allow_html=True)
+            news = get_simulated_news()
             for n in news:
                 st.markdown(f"""
-                <div style="border-bottom:1px solid #1f2937; padding:8px 0;">
-                    <a href="{n.link}" style="color:#e2e8f0; text-decoration:none; font-size:12px; font-weight:500;">{n.title}</a>
-                    <div style="color:#64748b; font-size:10px; margin-top:4px;">{n.published[:16]}</div>
+                <div style='border-bottom:1px solid #21262d; padding:8px 0;'>
+                    <div style='color:#c9d1d9; font-size:12px; font-weight:500'>{n['title']}</div>
+                    <div style='color:#8b949e; font-size:10px; margin-top:4px'>{n['source']} • {n['time']}</div>
                 </div>
                 """, unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-    elif menu == "Supply Chain":
-        st.markdown("### ⛓️ SUPPLY CHAIN ANALYSIS")
-        s1, s2 = st.columns(2)
-        with s1:
-            st.markdown("<div class='g-card'><div class='g-card-header'>KEY SUPPLIERS</div>", unsafe_allow_html=True)
-            # Fake data pour démo
+    with tab2:
+        st.markdown("### FINANCIAL HEALTH")
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
             st.dataframe(pd.DataFrame({
-                "Company": ["TSMC", "Foxconn", "Samsung", "LG Display"],
-                "Reliance": ["High", "High", "Medium", "Low"],
-                "Risk Score": [12, 45, 23, 10]
+                "Metric": ["Revenue", "Gross Margin", "EBITDA", "Net Income"],
+                "Value": ["$32.4B", "45.2%", "$12.1B", "$8.4B"],
+                "YoY": ["+12%", "+2%", "+8%", "+15%"]
             }), use_container_width=True, hide_index=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-        with s2:
-            st.markdown("<div class='g-card'><div class='g-card-header'>REVENUE EXPOSURE BY REGION</div>", unsafe_allow_html=True)
-            # Fake chart
-            exp_data = pd.DataFrame({"Region": ["Americas", "Europe", "China", "APAC"], "Revenue": [45, 25, 20, 10]})
-            st.bar_chart(exp_data.set_index("Region"))
-            st.markdown("</div>", unsafe_allow_html=True)
+        with col_f2:
+            st.info("Detailed financial modeling requires a Premium subscription.")
 
-    elif menu == "Financials":
-        st.markdown("### 📊 FINANCIAL STATEMENTS")
-        # Utilisation de st.dataframe avec column_config pour un look pro
-        fin_data = pd.DataFrame({
-            "Metric": ["Total Revenue", "Gross Profit", "Operating Income", "Net Income"],
-            "2023": [383000, 170000, 114000, 96000],
-            "2022": [394000, 170000, 119000, 99000],
-            "YoY Growth": [-0.02, 0.00, -0.04, -0.03]
-        })
-        st.dataframe(
-            fin_data,
-            column_config={
-                "YoY Growth": st.column_config.ProgressColumn(
-                    "Growth Trend", format="%.2f%%", min_value=-0.1, max_value=0.1
-                ),
-                "2023": st.column_config.NumberColumn(format="$%d M"),
-                "2022": st.column_config.NumberColumn(format="$%d M"),
-            },
-            use_container_width=True,
-            hide_index=True
-        )
-
-    elif menu == "Macro Data":
-        st.markdown("### 🌍 GLOBAL MACRO CONTEXT")
-        # Grid de données macro
-        mac_data = {
-            "US 10Y YIELD": "4.25%",
-            "VIX (FEAR)": "13.40",
-            "FED RATE": "5.50%",
-            "INFLATION (CPI)": "3.1%"
-        }
-        cols = st.columns(4)
-        for i, (k, v) in enumerate(mac_data.items()):
-            with cols[i]:
-                st.markdown(f"""
-                <div class="g-card" style="text-align:center;">
-                    <div style="color:#94a3b8; font-size:12px;">{k}</div>
-                    <div style="color:#fff; font-size:24px; font-weight:bold; margin-top:5px;">{v}</div>
-                </div>
-                """, unsafe_allow_html=True)
+    with tab3:
+        st.markdown("### ⛓️ SUPPLY CHAIN GRAPH")
+        st.markdown("Visualizing Tier-1 and Tier-2 suppliers for NASDAQ-100 components.")
+        # Placeholder graph
+        st.bar_chart(pd.DataFrame(np.random.rand(20, 3), columns=["APAC", "EMEA", "AMER"]))
 
 else:
-    st.error("Ticker not found. Try NQ=F")
+    st.error("SYSTEM ERROR: Unable to fetch market data. Please check your connection.")
+    if st.button("RETRY CONNECTION"):
+        st.cache_data.clear()
+        st.rerun()
