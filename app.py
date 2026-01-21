@@ -109,12 +109,11 @@ with st.sidebar:
         st.cache_data.clear()
 
 # --- INITIALISATION DES VARIABLES (ANTI-CRASH) ---
-# C'est ici qu'on règle ton erreur NameError : on initialise tout à 0 par défaut
 current_price = 0.0
 daily_change = 0.0
 pct_change = 0.0
 rsi_now = 0.0
-data_available = False # Drapeau pour savoir si la data est là
+data_available = False 
 
 # 1. HEADER (Tentative de chargement)
 df = get_market_data(ticker_input)
@@ -141,9 +140,8 @@ if df is not None and not df.empty:
         </div>
         """, unsafe_allow_html=True)
 else:
-    # Header en mode Erreur (mais sans planter)
     st.error(f"DATA FEED OFFLINE: Impossible de joindre Yahoo Finance pour {ticker_input}. Réessayez 'CLEAR CACHE' ou attendez.")
-    current_price = 0.0 # Valeur par défaut pour éviter le crash en bas
+    current_price = 0.0 
 
 st.markdown("---")
 
@@ -170,11 +168,12 @@ with tab_chart:
         fig.add_hline(y=70, line_width=1, line_dash="dot", line_color="red", row=2, col=1)
         fig.add_hline(y=30, line_width=1, line_dash="dot", line_color="green", row=2, col=1)
 
+        # --- CORRECTION DE L'ERREUR PLOTLY ICI ---
+        # J'ai supprimé "bg_color='black'" qui causait le crash
         fig.update_layout(
             height=600,
-            bg_color='black',
-            plot_bgcolor='black',
-            paper_bgcolor='black',
+            plot_bgcolor='black',   # Couleur de la zone de tracé
+            paper_bgcolor='black',  # Couleur du fond global
             font=dict(color='#888', family="Courier New"),
             xaxis_rangeslider_visible=False,
             showlegend=False,
@@ -208,7 +207,6 @@ with tab_news:
 with tab_depth:
     st.markdown("### MARKET DEPTH (SIMULATION)")
     
-    # CORRECTION DU BUG ICI : On vérifie si le prix existe avant de calculer
     if current_price > 0:
         c_bid, c_ask = st.columns(2)
         with c_bid:
