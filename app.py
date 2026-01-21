@@ -1,260 +1,270 @@
 import streamlit as st
-import streamlit.components.v1 as components
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import feedparser
+from textblob import TextBlob # Pour l'analyse de sentiment NLP
+from datetime import datetime, timedelta
 
 # --- 1. CONFIGURATION DU TERMINAL ---
 st.set_page_config(
     layout="wide",
-    page_title="NQ SAM VISION",
+    page_title="NQ SAM VISION [QUANT]",
     page_icon="🦅",
     initial_sidebar_state="collapsed"
 )
 
-# --- 2. CSS "BLOOMBERG BLACK" ---
+# --- 2. CSS CUSTOM "BLOOMBERG QUANT" ---
 st.markdown("""
     <style>
-    /* RESET TOTAL */
-    .stApp {background-color: #000000;}
-    .block-container {padding: 0px 10px !important; margin: 0px !important; max-width: 100% !important;}
+    /* FOND NOIR ABSOLU */
+    .stApp {background-color: #050505;}
     
-    /* SUPPRESSION DE L'INTERFACE STREAMLIT */
-    header, footer, #MainMenu {display: none !important;}
-    div[data-testid="stVerticalBlock"] {gap: 5px;}
+    /* TYPO TERMINAL */
+    * {font-family: 'Consolas', 'Courier New', monospace !important; font-size: 12px;}
     
-    /* HEADER CUSTOM */
-    .bb-header {
-        background-color: #111;
-        border-bottom: 2px solid #FF9800;
-        color: #FF9800;
-        padding: 8px 15px;
-        font-family: 'Courier New', monospace;
-        font-weight: bold;
-        font-size: 18px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
+    /* SUPPRESSION MARGES */
+    .block-container {padding-top: 0px !important; padding-left: 10px !important; padding-right: 10px !important;}
+    header, footer {display: none !important;}
+    
+    /* COULEURS SEMANTIQUES */
+    .bull {color: #00FF00; font-weight: bold;}
+    .bear {color: #FF0000; font-weight: bold;}
+    .neutral {color: #FF9800; font-weight: bold;}
+    
+    /* PANELS */
+    .quant-panel {
+        background: #0e0e0e;
+        border: 1px solid #333;
+        padding: 10px;
         margin-bottom: 5px;
     }
-    .bb-status { font-size: 10px; color: #00FF00; letter-spacing: 1px; }
+    .panel-header {
+        border-bottom: 1px solid #333;
+        color: #FF9800;
+        font-size: 11px;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+        letter-spacing: 1px;
+    }
     
-    /* CONTAINERS WIDGETS */
-    .widget-box { border: 1px solid #333; background: #000; height: 100%; }
+    /* TABLES CUSTOM */
+    table {width: 100%; border-collapse: collapse;}
+    td, th {border-bottom: 1px solid #222; padding: 4px; color: #ddd;}
+    th {text-align: left; color: #666;}
     </style>
 """, unsafe_allow_html=True)
 
-# --- 3. WIDGETS INSTITUTIONNELS (HTML/JS) ---
+# --- 3. MOTEUR D'ANALYSE (PYTHON BACKEND) ---
 
-def w_ticker_tape():
-    # Bandeau défilant (Indices + Commodities)
-    code = """
-    <div class="tradingview-widget-container">
-      <div class="tradingview-widget-container__widget"></div>
-      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js" async>
-      {
-      "symbols": [
-        {"proName": "CME_MINI:NQ1!", "title": "NQ FUTURES"},
-        {"proName": "CME_MINI:ES1!", "title": "ES FUTURES"},
-        {"proName": "TVC:VIX", "title": "VIX"},
-        {"proName": "TVC:DXY", "title": "DOLLAR"},
-        {"proName": "US10Y", "title": "US 10Y"},
-        {"proName": "BITSTAMP:BTCUSD", "title": "BITCOIN"}
-      ],
-      "showSymbolLogo": true,
-      "colorTheme": "dark",
-      "isTransparent": false,
-      "displayMode": "adaptive",
-      "locale": "en"
-    }
-      </script>
+@st.cache_data(ttl=60)
+def fetch_market_data():
+    # Récupération NQ + Macro
+    # Utilisation de QQQ comme proxy fiable si NQ=F (Futures) est bloqué par Yahoo
+    tickers = ["NQ=F", "QQQ", "^VIX", "BTC-USD", "^TNX"]
+    data = yf.download(tickers, period="5d", interval="15m", group_by='ticker', progress=False)
+    return data
+
+def process_sentiment_nlp():
+    # C'EST ICI QUE L'IA ANALYSE LE TEXTE
+    # On récupère les news RSS
+    rss_urls = [
+        "https://finance.yahoo.com/news/rssindex",
+        "http://feeds.marketwatch.com/marketwatch/topstories/"
+    ]
+    
+    news_items = []
+    total_polarity = 0
+    count = 0
+    
+    for url in rss_urls:
+        try:
+            feed = feedparser.parse(url)
+            for entry in feed.entries[:5]:
+                # Analyse de sentiment avec TextBlob
+                analysis = TextBlob(entry.title)
+                polarity = analysis.sentiment.polarity # Score entre -1 (Neg) et +1 (Pos)
+                
+                # Classification
+                if polarity > 0.1: sent = "BULL"
+                elif polarity < -0.1: sent = "BEAR"
+                else: sent = "NEUT"
+                
+                news_items.append({
+                    "title": entry.title,
+                    "link": entry.link,
+                    "time": entry.published[17:22] if 'published' in entry else "LIVE",
+                    "score": polarity,
+                    "label": sent
+                })
+                total_polarity += polarity
+                count += 1
+        except: continue
+        
+    # Score global du marché (-100 à +100)
+    avg_score = (total_polarity / count) * 100 if count > 0 else 0
+    return news_items, avg_score
+
+def calculate_quant_indicators(df):
+    if df.empty: return df
+    
+    # 1. VWAP (Volume Weighted Average Price)
+    df['VWAP'] = (df['Volume'] * (df['High'] + df['Low'] + df['Close']) / 3).cumsum() / df['Volume'].cumsum()
+    
+    # 2. Bandes de Bollinger (2 Std Dev)
+    df['SMA20'] = df['Close'].rolling(window=20).mean()
+    df['STD20'] = df['Close'].rolling(window=20).std()
+    df['Upper'] = df['SMA20'] + (2 * df['STD20'])
+    df['Lower'] = df['SMA20'] - (2 * df['STD20'])
+    
+    # 3. RSI (Relative Strength Index)
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    
+    return df
+
+# --- 4. DATA LOADING & PROCESSING ---
+
+raw_data = fetch_market_data()
+news_data, sentiment_score = process_sentiment_nlp()
+
+# Sélection Intelligente NQ vs QQQ
+if 'NQ=F' in raw_data and not raw_data['NQ=F']['Close'].dropna().empty:
+    main_df = raw_data['NQ=F'].dropna()
+    symbol_display = "NQ=F (FUTURES)"
+else:
+    main_df = raw_data['QQQ'].dropna()
+    symbol_display = "QQQ (PROXY)"
+
+# Calcul des indicateurs par notre moteur Python
+df_tech = calculate_quant_indicators(main_df)
+current = df_tech.iloc[-1]
+prev = df_tech.iloc[-2]
+
+# --- 5. INTERFACE DASHBOARD ---
+
+# HEADER
+col_h1, col_h2, col_h3 = st.columns([2, 1, 1])
+chg = current['Close'] - prev['Close']
+pct = (chg / prev['Close']) * 100
+color_h = "#00FF00" if chg >= 0 else "#FF0000"
+
+with col_h1:
+    st.markdown(f"""
+    <div style='font-size: 24px; color: #FF9800; font-weight: bold;'>{symbol_display}</div>
+    <div style='font-size: 12px; color: #666;'>NQ SAM VISION // REALTIME QUANT ENGINE</div>
+    """, unsafe_allow_html=True)
+
+with col_h2:
+    st.markdown(f"""
+    <div style='text-align:right'>
+        <div style='font-size: 32px; color: {color_h}; font-weight: bold;'>{current['Close']:,.2f}</div>
+        <div style='font-size: 14px; color: {color_h};'>{chg:+.2f} ({pct:+.2f}%)</div>
     </div>
-    """
-    components.html(code, height=46)
+    """, unsafe_allow_html=True)
 
-def w_chart():
-    # Graphique Avancé (Le coeur du terminal)
-    code = """
-    <div class="tradingview-widget-container" style="height:100%;width:100%">
-      <div class="tradingview-widget-container__widget" style="height:calc(100% - 32px);width:100%"></div>
-      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
-      {
-      "autosize": true,
-      "symbol": "CME_MINI:NQ1!",
-      "interval": "5",
-      "timezone": "Etc/UTC",
-      "theme": "dark",
-      "style": "1",
-      "locale": "en",
-      "enable_publishing": false,
-      "hide_side_toolbar": false,
-      "allow_symbol_change": true,
-      "details": true,
-      "hotlist": false,
-      "calendar": false,
-      "studies": [
-        "STD;RSI",
-        "STD;VWAP",
-        "STD;Bollinger_Bands"
-      ],
-      "support_host": "https://www.tradingview.com"
-    }
-      </script>
+with col_h3:
+    # Jauge de sentiment NLP
+    sent_col = "#00FF00" if sentiment_score > 5 else "#FF0000" if sentiment_score < -5 else "#FF9800"
+    st.markdown(f"""
+    <div style='background:#111; border:1px solid #333; padding:5px; text-align:center'>
+        <div style='color:#666; font-size:10px'>NEWS SENTIMENT (NLP)</div>
+        <div style='font-size:20px; font-weight:bold; color:{sent_col}'>{sentiment_score:.1f}</div>
+        <div style='font-size:10px; color:#aaa'>SCORE AI</div>
     </div>
-    """
-    components.html(code, height=700)
+    """, unsafe_allow_html=True)
 
-def w_sentiment():
-    # Jauge Technique (Sentiment Temps Réel)
-    code = """
-    <div class="tradingview-widget-container">
-      <div class="tradingview-widget-container__widget"></div>
-      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-technical-analysis.js" async>
-      {
-      "interval": "15m",
-      "width": "100%",
-      "isTransparent": false,
-      "height": "350",
-      "symbol": "CME_MINI:NQ1!",
-      "showIntervalTabs": true,
-      "displayMode": "single",
-      "locale": "en",
-      "colorTheme": "dark"
-    }
-      </script>
-    </div>
-    """
-    components.html(code, height=350)
+st.markdown("---")
 
-def w_news():
-    # Flux d'actualités filtré sur le Nasdaq
-    code = """
-    <div class="tradingview-widget-container">
-      <div class="tradingview-widget-container__widget"></div>
-      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-timeline.js" async>
-      {
-      "feedMode": "symbol",
-      "symbol": "CME_MINI:NQ1!",
-      "colorTheme": "dark",
-      "isTransparent": false,
-      "displayMode": "compact",
-      "width": "100%",
-      "height": "350",
-      "locale": "en"
-    }
-      </script>
-    </div>
-    """
-    components.html(code, height=350)
+# MAIN GRID
+c_left, c_main, c_right = st.columns([1, 3, 1])
 
-def w_calendar():
-    # Calendrier Eco (Vital pour le NQ)
-    code = """
-    <div class="tradingview-widget-container">
-      <div class="tradingview-widget-container__widget"></div>
-      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>
-      {
-      "colorTheme": "dark",
-      "isTransparent": false,
-      "width": "100%",
-      "height": "300",
-      "locale": "en",
-      "importanceFilter": "0,1",
-      "currencyFilter": "USD"
-    }
-      </script>
-    </div>
-    """
-    components.html(code, height=300)
-
-def w_watchlist():
-    # Liste de surveillance Tech
-    code = """
-    <div class="tradingview-widget-container">
-      <div class="tradingview-widget-container__widget"></div>
-      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-market-overview.js" async>
-      {
-      "colorTheme": "dark",
-      "dateRange": "12M",
-      "showChart": false,
-      "locale": "en",
-      "largeChartUrl": "",
-      "isTransparent": false,
-      "showSymbolLogo": true,
-      "showFloatingTooltip": false,
-      "width": "100%",
-      "height": "400",
-      "tabs": [
-        {
-          "title": "MAG 7",
-          "symbols": [
-            { "s": "NASDAQ:NVDA" },
-            { "s": "NASDAQ:AAPL" },
-            { "s": "NASDAQ:MSFT" },
-            { "s": "NASDAQ:AMZN" },
-            { "s": "NASDAQ:TSLA" },
-            { "s": "NASDAQ:META" },
-            { "s": "NASDAQ:GOOGL" }
-          ]
-        },
-        {
-          "title": "MACRO",
-          "symbols": [
-             { "s": "TVC:DXY" },
-             { "s": "TVC:US10Y" },
-             { "s": "CME_MINI:ES1!" }
-          ]
-        }
-      ]
-    }
-      </script>
-    </div>
-    """
-    components.html(code, height=400)
-
-# --- 4. MISE EN PAGE DU TERMINAL ---
-
-# A. Header & Tape
-st.markdown("""
-<div class="bb-header">
-    <div>NQ SAM VISION <span style="color:#666; font-size:12px;">// PROFESSIONAL TERMINAL</span></div>
-    <div class="bb-status">● SYSTEM ONLINE</div>
-</div>
-""", unsafe_allow_html=True)
-
-w_ticker_tape()
-
-# B. Main Grid (Layout 3 colonnes type Bloomberg : 20% | 60% | 20%)
-c_left, c_center, c_right = st.columns([20, 55, 25], gap="small")
-
+# --- GAUCHE : DONNÉES MACRO ---
 with c_left:
-    st.markdown('<div class="widget-box">', unsafe_allow_html=True)
-    # 1. Sentiment Gauge
-    components.html("<div style='color:#FF9800; font-family:monospace; font-size:12px; font-weight:bold; padding:5px;'>MARKET MOOD (15M)</div>", height=25)
-    w_sentiment()
+    st.markdown('<div class="quant-panel"><div class="panel-header">MACRO CONTEXT</div>', unsafe_allow_html=True)
     
-    # 2. Watchlist Tech
-    components.html("<div style='color:#FF9800; font-family:monospace; font-size:12px; font-weight:bold; padding:5px; border-top:1px solid #333'>SECTOR: TECH</div>", height=30)
-    w_watchlist()
+    # Extraction Macro
+    try:
+        vix = raw_data['^VIX']['Close'].iloc[-1]
+        tnx = raw_data['^TNX']['Close'].iloc[-1]
+        btc = raw_data['BTC-USD']['Close'].iloc[-1]
+        
+        st.markdown(f"""
+        <table>
+            <tr><td>VIX (FEAR)</td><td style='color:{"#f00" if vix > 20 else "#0f0"}; text-align:right'>{vix:.2f}</td></tr>
+            <tr><td>US 10Y</td><td style='color:#ddd; text-align:right'>{tnx:.3f}%</td></tr>
+            <tr><td>BITCOIN</td><td style='color:#FF9800; text-align:right'>${btc:,.0f}</td></tr>
+        </table>
+        """, unsafe_allow_html=True)
+    except:
+        st.write("Macro Data Loading...")
     st.markdown('</div>', unsafe_allow_html=True)
 
-with c_center:
-    st.markdown('<div class="widget-box">', unsafe_allow_html=True)
-    # 3. Main Chart
-    w_chart()
+    # Données Techniques
+    st.markdown('<div class="quant-panel"><div class="panel-header">TECHNICALS</div>', unsafe_allow_html=True)
+    st.markdown(f"""
+    <table>
+        <tr><td>RSI (14)</td><td style='text-align:right; color:{"#f00" if current['RSI']>70 else "#0f0" if current['RSI']<30 else "#fff"}'>{current['RSI']:.1f}</td></tr>
+        <tr><td>VWAP</td><td style='text-align:right; color:#FF9800'>{current['VWAP']:,.2f}</td></tr>
+        <tr><td>VOLATILITY</td><td style='text-align:right'>{(current['Upper']-current['Lower']):.2f}</td></tr>
+    </table>
+    """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
+# --- CENTRE : GRAPHIQUE PYTHON (PLOTLY) ---
+with c_main:
+    st.markdown('<div class="quant-panel">', unsafe_allow_html=True)
+    
+    # Construction du graphique complexe
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75, 0.25], vertical_spacing=0.02)
+    
+    # 1. Candlestick
+    fig.add_trace(go.Candlestick(
+        x=df_tech.index, open=df_tech['Open'], high=df_tech['High'], low=df_tech['Low'], close=df_tech['Close'],
+        name='Price', increasing_line_color='#00FF00', decreasing_line_color='#FF0000'
+    ), row=1, col=1)
+    
+    # 2. VWAP & Bollinger
+    fig.add_trace(go.Scatter(x=df_tech.index, y=df_tech['VWAP'], line=dict(color='#FF9800', width=1, dash='dot'), name='VWAP'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df_tech.index, y=df_tech['Upper'], line=dict(color='#333', width=1), name='BB Up'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df_tech.index, y=df_tech['Lower'], line=dict(color='#333', width=1), fill='tonexty', fillcolor='rgba(255,255,255,0.05)', name='BB Low'), row=1, col=1)
+    
+    # 3. Volume
+    colors_vol = ['#00FF00' if c >= o else '#FF0000' for c, o in zip(df_tech['Close'], df_tech['Open'])]
+    fig.add_trace(go.Bar(x=df_tech.index, y=df_tech['Volume'], marker_color=colors_vol, name='Vol'), row=2, col=1)
+    
+    # Layout Pro
+    fig.update_layout(
+        height=550,
+        margin=dict(l=0, r=50, t=10, b=0),
+        template="plotly_dark",
+        paper_bgcolor='#0e0e0e',
+        plot_bgcolor='#0e0e0e',
+        showlegend=False,
+        xaxis_rangeslider_visible=False
+    )
+    # Hiding weekends (Gap removal)
+    fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])], gridcolor='#222')
+    fig.update_yaxes(side='right', gridcolor='#222')
+    
+    st.plotly_chart(fig, use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# --- DROITE : NEWS NLP & AI ---
 with c_right:
-    st.markdown('<div class="widget-box">', unsafe_allow_html=True)
-    # 4. News Feed
-    components.html("<div style='color:#FF9800; font-family:monospace; font-size:12px; font-weight:bold; padding:5px;'>NEWS WIRE</div>", height=25)
-    w_news()
+    st.markdown('<div class="quant-panel"><div class="panel-header">AI NEWS ANALYSIS</div>', unsafe_allow_html=True)
     
-    # 5. Economic Calendar
-    components.html("<div style='color:#FF9800; font-family:monospace; font-size:12px; font-weight:bold; padding:5px; border-top:1px solid #333'>MACRO CALENDAR</div>", height=30)
-    w_calendar()
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# Footer
-st.markdown("""
-<div style='text-align:center; color:#333; font-family:monospace; font-size:10px; margin-top:10px;'>
-    CONNECTED TO CME GLOBEX DATA FEED | LATENCY: <10ms | SESSION ID: 882-Alpha
-</div>
-""", unsafe_allow_html=True)
+    for item in news_data:
+        # Code couleur selon l'analyse de sentiment
+        s_color = "#00FF00" if item['label'] == "BULL" else "#FF0000" if item['label'] == "BEAR" else "#888"
+        
+        st.markdown(f"""
+        <div style='border-bottom:1px solid #222; padding:8px 0;'>
+            <div style='font-size:10px; color:#FF9800; display:flex; justify-content:space-between;'>
+                <span>{item['time']}</span>
+                <span style='color:{s_color}; font-weight
