@@ -2,5 +2,4 @@ streamlit
 yfinance
 plotly
 pandas
-numpy
-lxml
+feedparser
