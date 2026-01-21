@@ -1,148 +1,202 @@
 import streamlit as st
 import yfinance as yf
-import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import pandas as pd
+import feedparser
 from datetime import datetime
 
-# --- BLOOMBERG COMMAND CENTER V7 ---
-st.set_page_config(page_title="BLOOMBERG NQ PRO", layout="wide", initial_sidebar_state="collapsed")
+# --- CONFIGURATION DU PROJET ---
+st.set_page_config(
+    layout="wide", 
+    page_title="Sam-NQ-Vision", # <--- NOM MIS À JOUR ICI
+    initial_sidebar_state="collapsed",
+    page_icon="🦅"
+)
 
-# 1. CSS INJECTION (FORCE ZERO MARGINS & BLOOMBERG COLORS)
+# --- CSS HACK (DESIGN BLOOMBERG) ---
 st.markdown("""
-<style>
-    /* Kill Streamlit Defaults */
-    .stApp { background-color: #000000; color: #d1d1d1; font-family: 'JetBrains Mono', monospace; }
-    [data-testid="stHeader"] { display: none; }
-    .main .block-container { 
-        padding-top: 0.5rem !important; 
-        padding-bottom: 0rem !important; 
-        padding-left: 0.5rem !important; 
-        padding-right: 0.5rem !important; 
-        max-width: 100% !important; 
+    <style>
+    /* Fond noir global */
+    .stApp {background-color: #050505;}
+    
+    /* Typographie Terminal */
+    .stMarkdown, .stText, p, div, span {
+        color: #e0e0e0; 
+        font-family: 'Consolas', 'Courier New', monospace;
     }
     
-    /* Metrics High Density */
-    div[data-testid="stMetric"] {
-        background-color: #050505;
-        border: 1px solid #222;
-        border-left: 3px solid #ffb000;
-        padding: 4px 10px;
-        margin-bottom: 0px;
+    /* Métriques (Prix, etc.) */
+    div[data-testid="stMetricValue"] {
+        color: #FF9800 !important; /* Orange Bloomberg */
+        font-size: 26px !important;
     }
-    div[data-testid="stMetricValue"] { font-size: 1.1rem !important; color: #ffffff !important; font-weight: 700; }
-    div[data-testid="stMetricLabel"] { font-size: 0.65rem !important; color: #888 !important; text-transform: uppercase; }
-    
-    /* Sidebar Table Look */
-    .stDataFrame { border: 1px solid #222 !important; }
-    
-    /* Input Style */
-    .stTextInput input {
-        background-color: #0a0a0a !important;
-        color: #00f0ff !important;
-        border: 1px solid #333 !important;
-        border-radius: 2px;
-        font-family: 'JetBrains Mono', monospace;
+    div[data-testid="stMetricLabel"] {
+        color: #888; 
+        font-size: 11px !important;
     }
-</style>
+    
+    /* Masquer le menu hamburger et le footer Streamlit */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    
+    /* Réduire les marges pour effet "Dense" */
+    .block-container {
+        padding-top: 1rem; 
+        padding-bottom: 0rem; 
+        padding-left: 1rem; 
+        padding-right: 1rem;
+    }
+    
+    /* Style des Onglets */
+    button[data-baseweb="tab"] {
+        background-color: #111;
+        border: 1px solid #333;
+        color: #888;
+        border-radius: 0px;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        background-color: #FF9800;
+        color: #000;
+        font-weight: bold;
+    }
+    </style>
 """, unsafe_allow_html=True)
 
-# 2. DATA ENGINE
+# --- FONCTIONS BACKEND ---
+
 @st.cache_data(ttl=60)
-def fetch_terminal_data(ticker, period="1mo"):
+def get_market_data(ticker="QQQ"):
+    df = yf.download(ticker, period="5d", interval="5m", progress=False)
+    
+    if df.empty:
+        return None
+
+    # Indicateurs Techniques
+    df['SMA_20'] = df['Close'].rolling(window=20).mean()
+    df['SMA_50'] = df['Close'].rolling(window=50).mean()
+    
+    # RSI
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    
+    return df
+
+def get_rss_news():
+    # Flux RSS Yahoo Finance
+    rss_url = "https://finance.yahoo.com/news/rssindex"
     try:
-        data = yf.download(ticker, period=period, interval="1h", progress=False)
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = data.columns.get_level_values(0)
-        
-        # Technicals
-        delta = data['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        data['RSI'] = 100 - (100 / (1 + rs))
-        
-        high_low = data['High'] - data['Low']
-        high_cp = np.abs(data['High'] - data['Close'].shift())
-        low_cp = np.abs(data['Low'] - data['Close'].shift())
-        tr = pd.concat([high_low, high_cp, low_cp], axis=1).max(axis=1)
-        data['ATR'] = tr.rolling(14).mean()
-        
-        return data
+        feed = feedparser.parse(rss_url)
+        return feed.entries[:10]
     except:
-        return pd.DataFrame()
+        return []
 
-# 3. TOP TICKER TAPE (5 COLUMNS)
-tape_cols = st.columns(5)
-tickers = {"NQ=F": "Nasdaq", "ES=F": "S&P 500", "BTC-USD": "Bitcoin", "DX-Y.NYB": "DXY", "^TNX": "US10Y"}
+# --- INTERFACE UTILISATEUR (UI) ---
 
-for i, (sym, label) in enumerate(tickers.items()):
-    with tape_cols[i]:
-        d = yf.download(sym, period="1d", progress=False)
-        if not d.empty:
-            if isinstance(d.columns, pd.MultiIndex): d.columns = d.columns.get_level_values(0)
-            price = d['Close'].iloc[-1]
-            change = ((price / d['Open'].iloc[0]) - 1) * 100
-            st.metric(label, f"{price:,.2f}", f"{change:+.2f}%")
+# Sidebar cachée (Menu config)
+with st.sidebar:
+    st.header("SAM-NQ-VISION CONFIG")
+    ticker_input = st.text_input("SYMBOL", "QQQ").upper()
+    if st.button("CLEAR CACHE"):
+        st.cache_data.clear()
 
-# 4. MAIN WORKSPACE (75/25 SPLIT)
-col_main, col_side = st.columns([3, 1])
+# 1. HEADER (Ligne du haut)
+df = get_market_data(ticker_input)
 
-with col_main:
-    # Header & Command
-    c_cmd, c_info = st.columns([1, 2])
-    with c_cmd:
-        target = st.text_input("COMMAND", value="NVDA").upper()
+if df is not None:
+    current_price = float(df['Close'].iloc[-1])
+    open_price = float(df['Open'].iloc[0])
+    daily_change = current_price - open_price
+    pct_change = (daily_change / open_price) * 100
     
-    df = fetch_terminal_data(target)
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 3])
     
-    if not df.empty:
-        # MAIN CHART
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                           vertical_spacing=0.03, row_heights=[0.8, 0.2])
-        
-        fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], 
-                                   low=df['Low'], close=df['Close'], name="Price"), row=1, col=1)
-        
-        fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name="Vol", marker_color='#333'), row=2, col=1)
-        
-        fig.update_layout(template='plotly_dark', height=550, 
-                         margin=dict(l=0,r=0,t=10,b=0),
-                         xaxis_rangeslider_visible=False,
-                         paper_bgcolor='black', plot_bgcolor='black')
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-        
-        # LOWER STATUS CARDS
-        st.markdown("<br>", unsafe_allow_html=True)
-        sc1, sc2, sc3 = st.columns(3)
-        with sc1:
-            st.metric("Total Vol (1H)", f"{df['Volume'].iloc[-1]:,.0f}", "Live Data")
-        with sc2:
-            rsi_val = df['RSI'].iloc[-1]
-            color = "Normal"
-            if rsi_val > 70: color = "Overbought"
-            elif rsi_val < 30: color = "Oversold"
-            st.metric("RSI (14)", f"{rsi_val:.2f}", color)
-        with sc3:
-            st.metric("ATR (Volatility)", f"{df['ATR'].iloc[-1]:.2f}", "Trailing 14")
-    else:
-        st.error(f"INVALID TICKER: {target}")
+    with c1: st.metric("LAST PRICE", f"{current_price:.2f}")
+    with c2: st.metric("CHANGE", f"{daily_change:+.2f}", f"{pct_change:+.2f}%")
+    with c3: 
+        rsi_now = df['RSI'].iloc[-1]
+        st.metric("RSI (14)", f"{rsi_now:.1f}")
+    with c4:
+        # Ticker mis à jour avec le nom du projet
+        st.markdown(f"""
+        <div style='text-align:right; padding-top:10px;'>
+        <span style='color:#FF9800; font-weight:bold; font-size:20px;'>SAM-NQ-VISION</span> 
+        <span style='color:#666;'> | {ticker_input} PROXY | </span>
+        <span style='color:#00FF00;'>● ONLINE</span>
+        </div>
+        """, unsafe_allow_html=True)
+else:
+    st.error("DATA ERROR: Impossible de charger les données.")
 
-with col_side:
-    st.markdown("<h4 style='color:#ffb000; font-size: 10px; border-bottom:1px solid #333;'>MARKET MOVERS (TECH)</h4>", unsafe_allow_html=True)
-    movers = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA"]
-    mover_data = []
-    for m in movers:
-        tick = yf.Ticker(m)
-        price = tick.fast_info['last_price']
-        change = (tick.fast_info['last_price'] / tick.fast_info['open'] - 1) * 100
-        mover_data.append({"Ticker": m, "Price": f"{price:.2f}", "Chg %": f"{change:+.2f}%"})
-    
-    st.table(pd.DataFrame(mover_data))
-    
-    st.markdown("<br><h4 style='color:#ffb000; font-size: 10px; border-bottom:1px solid #333;'>LAST NEWS</h4>", unsafe_allow_html=True)
-    news_ticker = yf.Ticker(target)
-    for n in news_ticker.news[:5]:
-        st.markdown(f"**[{n['publisher']}]** {n['title'][:60]}...")
-        st.markdown(f"<p style='color:#555; font-size: 9px;'>{datetime.fromtimestamp(n['providerPublishTime']).strftime('%H:%M')}</p>", unsafe_allow_html=True)
+st.markdown("---")
+
+# 2. ESPACE DE TRAVAIL
+tab_chart, tab_news, tab_depth = st.tabs(["CHARTING [F1]", "NEWS WIRE [F2]", "LEVEL II [F3]"])
+
+with tab_chart:
+    if df is not None:
+        fig = make_subplots(
+            rows=2, cols=1, 
+            shared_xaxes=True, 
+            vertical_spacing=0.05, 
+            row_heights=[0.75, 0.25]
+        )
+
+        fig.add_trace(go.Candlestick(
+            x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
+            name="Price", increasing_line_color='#00FF00', decreasing_line_color='#FF0000'
+        ), row=1, col=1)
+
+        fig.add_trace(go.Scatter(x=df.index, y=df['SMA_20'], line=dict(color='orange', width=1), name="SMA 20"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color='#00E5FF', width=1), name="RSI"), row=2, col=1)
+        
+        fig.add_hline(y=70, line_width=1, line_dash="dot", line_color="red", row=2, col=1)
+        fig.add_hline(y=30, line_width=1, line_dash="dot", line_color="green", row=2, col=1)
+
+        fig.update_layout(
+            height=600,
+            bg_color='black',
+            plot_bgcolor='black',
+            paper_bgcolor='black',
+            font=dict(color='#888', family="Courier New"),
+            xaxis_rangeslider_visible=False,
+            showlegend=False,
+            margin=dict(l=0, r=40, t=10, b=0),
+        )
+        
+        fig.update_xaxes(showgrid=False, gridcolor='#222')
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#1a1a1a', side='right') 
+
+        st.plotly_chart(fig, use_container_width=True)
+
+with tab_news:
+    st.markdown("### 📰 REAL-TIME NEWS WIRE")
+    news_items = get_rss_news()
+    if news_items:
+        for item in news_items:
+            pub_date = item.get('published', 'No Date')
+            st.markdown(f"""
+            <div style='border-bottom: 1px solid #222; padding: 10px; font-size: 14px;'>
+                <span style='color:#FF9800;'>[{pub_date}]</span><br>
+                <a href='{item.link}' target='_blank' style='color:#ddd; text-decoration:none; font-weight:bold;'>
+                    {item.title}
+                </a>
+            </div>
+            """, unsafe_allow_html=True)
+
+with tab_depth:
+    st.markdown("### MARKET DEPTH (SIMULATION)")
+    c_bid, c_ask = st.columns(2)
+    with c_bid:
+        st.markdown("**BID**")
+        st.dataframe(pd.DataFrame({"SIZE": [5, 12, 4], "PRICE": [current_price-0.05, current_price-0.10, current_price-0.15]}), hide_index=True)
+    with c_ask:
+        st.markdown("**ASK**")
+        st.dataframe(pd.DataFrame({"PRICE": [current_price+0.05, current_price+0.10, current_price+0.15], "SIZE": [8, 20, 2]}), hide_index=True)
+
+if st.button('REFRESH DATA ⟳'):
+    st.rerun()
