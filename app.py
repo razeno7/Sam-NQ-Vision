@@ -5,7 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import feedparser
-from textblob import TextBlob # Pour l'analyse de sentiment NLP
+from textblob import TextBlob 
 from datetime import datetime, timedelta
 
 # --- 1. CONFIGURATION DU TERMINAL ---
@@ -62,14 +62,15 @@ st.markdown("""
 @st.cache_data(ttl=60)
 def fetch_market_data():
     # Récupération NQ + Macro
-    # Utilisation de QQQ comme proxy fiable si NQ=F (Futures) est bloqué par Yahoo
     tickers = ["NQ=F", "QQQ", "^VIX", "BTC-USD", "^TNX"]
-    data = yf.download(tickers, period="5d", interval="15m", group_by='ticker', progress=False)
-    return data
+    try:
+        data = yf.download(tickers, period="5d", interval="15m", group_by='ticker', progress=False)
+        return data
+    except:
+        return pd.DataFrame()
 
 def process_sentiment_nlp():
     # C'EST ICI QUE L'IA ANALYSE LE TEXTE
-    # On récupère les news RSS
     rss_urls = [
         "https://finance.yahoo.com/news/rssindex",
         "http://feeds.marketwatch.com/marketwatch/topstories/"
@@ -82,10 +83,10 @@ def process_sentiment_nlp():
     for url in rss_urls:
         try:
             feed = feedparser.parse(url)
-            for entry in feed.entries[:5]:
+            for entry in feed.entries[:6]:
                 # Analyse de sentiment avec TextBlob
                 analysis = TextBlob(entry.title)
-                polarity = analysis.sentiment.polarity # Score entre -1 (Neg) et +1 (Pos)
+                polarity = analysis.sentiment.polarity 
                 
                 # Classification
                 if polarity > 0.1: sent = "BULL"
@@ -103,23 +104,22 @@ def process_sentiment_nlp():
                 count += 1
         except: continue
         
-    # Score global du marché (-100 à +100)
     avg_score = (total_polarity / count) * 100 if count > 0 else 0
     return news_items, avg_score
 
 def calculate_quant_indicators(df):
     if df.empty: return df
     
-    # 1. VWAP (Volume Weighted Average Price)
+    # 1. VWAP
     df['VWAP'] = (df['Volume'] * (df['High'] + df['Low'] + df['Close']) / 3).cumsum() / df['Volume'].cumsum()
     
-    # 2. Bandes de Bollinger (2 Std Dev)
+    # 2. Bandes de Bollinger
     df['SMA20'] = df['Close'].rolling(window=20).mean()
     df['STD20'] = df['Close'].rolling(window=20).std()
     df['Upper'] = df['SMA20'] + (2 * df['STD20'])
     df['Lower'] = df['SMA20'] - (2 * df['STD20'])
     
-    # 3. RSI (Relative Strength Index)
+    # 3. RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -134,14 +134,17 @@ raw_data = fetch_market_data()
 news_data, sentiment_score = process_sentiment_nlp()
 
 # Sélection Intelligente NQ vs QQQ
-if 'NQ=F' in raw_data and not raw_data['NQ=F']['Close'].dropna().empty:
+if not raw_data.empty and 'NQ=F' in raw_data and not raw_data['NQ=F']['Close'].dropna().empty:
     main_df = raw_data['NQ=F'].dropna()
     symbol_display = "NQ=F (FUTURES)"
-else:
+elif not raw_data.empty and 'QQQ' in raw_data:
     main_df = raw_data['QQQ'].dropna()
     symbol_display = "QQQ (PROXY)"
+else:
+    st.error("DATA FEED DISCONNECTED. REFRESH.")
+    st.stop()
 
-# Calcul des indicateurs par notre moteur Python
+# Calcul des indicateurs
 df_tech = calculate_quant_indicators(main_df)
 current = df_tech.iloc[-1]
 prev = df_tech.iloc[-2]
@@ -169,7 +172,6 @@ with col_h2:
     """, unsafe_allow_html=True)
 
 with col_h3:
-    # Jauge de sentiment NLP
     sent_col = "#00FF00" if sentiment_score > 5 else "#FF0000" if sentiment_score < -5 else "#FF9800"
     st.markdown(f"""
     <div style='background:#111; border:1px solid #333; padding:5px; text-align:center'>
@@ -184,11 +186,10 @@ st.markdown("---")
 # MAIN GRID
 c_left, c_main, c_right = st.columns([1, 3, 1])
 
-# --- GAUCHE : DONNÉES MACRO ---
+# --- GAUCHE : MACRO ---
 with c_left:
     st.markdown('<div class="quant-panel"><div class="panel-header">MACRO CONTEXT</div>', unsafe_allow_html=True)
     
-    # Extraction Macro
     try:
         vix = raw_data['^VIX']['Close'].iloc[-1]
         tnx = raw_data['^TNX']['Close'].iloc[-1]
@@ -205,7 +206,6 @@ with c_left:
         st.write("Macro Data Loading...")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # Données Techniques
     st.markdown('<div class="quant-panel"><div class="panel-header">TECHNICALS</div>', unsafe_allow_html=True)
     st.markdown(f"""
     <table>
@@ -216,29 +216,24 @@ with c_left:
     """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-# --- CENTRE : GRAPHIQUE PYTHON (PLOTLY) ---
+# --- CENTRE : GRAPHIQUE PYTHON ---
 with c_main:
     st.markdown('<div class="quant-panel">', unsafe_allow_html=True)
     
-    # Construction du graphique complexe
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75, 0.25], vertical_spacing=0.02)
     
-    # 1. Candlestick
     fig.add_trace(go.Candlestick(
         x=df_tech.index, open=df_tech['Open'], high=df_tech['High'], low=df_tech['Low'], close=df_tech['Close'],
         name='Price', increasing_line_color='#00FF00', decreasing_line_color='#FF0000'
     ), row=1, col=1)
     
-    # 2. VWAP & Bollinger
     fig.add_trace(go.Scatter(x=df_tech.index, y=df_tech['VWAP'], line=dict(color='#FF9800', width=1, dash='dot'), name='VWAP'), row=1, col=1)
     fig.add_trace(go.Scatter(x=df_tech.index, y=df_tech['Upper'], line=dict(color='#333', width=1), name='BB Up'), row=1, col=1)
     fig.add_trace(go.Scatter(x=df_tech.index, y=df_tech['Lower'], line=dict(color='#333', width=1), fill='tonexty', fillcolor='rgba(255,255,255,0.05)', name='BB Low'), row=1, col=1)
     
-    # 3. Volume
     colors_vol = ['#00FF00' if c >= o else '#FF0000' for c, o in zip(df_tech['Close'], df_tech['Open'])]
     fig.add_trace(go.Bar(x=df_tech.index, y=df_tech['Volume'], marker_color=colors_vol, name='Vol'), row=2, col=1)
     
-    # Layout Pro
     fig.update_layout(
         height=550,
         margin=dict(l=0, r=50, t=10, b=0),
@@ -248,7 +243,6 @@ with c_main:
         showlegend=False,
         xaxis_rangeslider_visible=False
     )
-    # Hiding weekends (Gap removal)
     fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])], gridcolor='#222')
     fig.update_yaxes(side='right', gridcolor='#222')
     
@@ -260,11 +254,29 @@ with c_right:
     st.markdown('<div class="quant-panel"><div class="panel-header">AI NEWS ANALYSIS</div>', unsafe_allow_html=True)
     
     for item in news_data:
-        # Code couleur selon l'analyse de sentiment
-        s_color = "#00FF00" if item['label'] == "BULL" else "#FF0000" if item['label'] == "BEAR" else "#888"
+        # CORRECTION DE L'ERREUR ICI : EXTRACTION DES VARIABLES
+        i_time = item['time']
+        i_label = item['label']
+        i_score = item['score']
+        i_link = item['link']
+        i_title = item['title']
+        
+        s_color = "#00FF00" if i_label == "BULL" else "#FF0000" if i_label == "BEAR" else "#888"
         
         st.markdown(f"""
         <div style='border-bottom:1px solid #222; padding:8px 0;'>
             <div style='font-size:10px; color:#FF9800; display:flex; justify-content:space-between;'>
-                <span>{item['time']}</span>
-                <span style='color:{s_color}; font-weight
+                <span>{i_time}</span>
+                <span style='color:{s_color}; font-weight:bold'>{i_label} ({i_score:.2f})</span>
+            </div>
+            <a href='{i_link}' target='_blank' style='color:#ccc; text-decoration:none; font-size:11px; display:block; margin-top:3px;'>
+                {i_title}
+            </a>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    if st.button("RUN QUANT UPDATE"):
+        st.cache_data.clear()
+        st.rerun()
