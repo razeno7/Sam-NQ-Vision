@@ -3,7 +3,6 @@ import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
-import pandas_ta as ta # Si pas dispo, on calcule manuellement (ici manuel pour éviter dépendance)
 import numpy as np
 import feedparser
 from datetime import datetime, timedelta
@@ -60,21 +59,29 @@ st.markdown("""
 def fetch_and_process_data():
     # On charge plus d'historique pour les corrélations (60 jours)
     tickers = ["NQ=F", "QQQ", "^VIX", "^TNX", "BTC-USD", "GC=F", "DX-Y.NYB", "NVDA", "AAPL"]
-    data = yf.download(tickers, period="60d", interval="15m", group_by='ticker', progress=False)
-    
-    # Selection NQ
-    if 'NQ=F' in data and not data['NQ=F']['Close'].dropna().empty:
-        main_df = data['NQ=F'].dropna()
-        name = "NQ=F (FUTURES)"
-    else:
-        main_df = data['QQQ'].dropna()
-        name = "QQQ (PROXY)"
+    try:
+        data = yf.download(tickers, period="60d", interval="15m", group_by='ticker', progress=False)
         
-    return data, main_df, name
+        # Selection NQ
+        if 'NQ=F' in data and not data['NQ=F']['Close'].dropna().empty:
+            main_df = data['NQ=F'].dropna()
+            name = "NQ=F (FUTURES)"
+        else:
+            main_df = data['QQQ'].dropna()
+            name = "QQQ (PROXY)"
+            
+        return data, main_df, name
+    except:
+        return None, pd.DataFrame(), "OFFLINE"
 
 def calculate_quant_metrics(df, full_data):
+    if df.empty: return pd.DataFrame(), {}
+
     # 1. Signaux Techniques (Dernière bougie)
-    close = df['Close']
+    # On travaille sur une copie pour éviter les warnings
+    close = df['Close'].copy()
+    high = df['High'].copy()
+    low = df['Low'].copy()
     
     # RSI
     delta = close.diff()
@@ -96,7 +103,7 @@ def calculate_quant_metrics(df, full_data):
     lower = sma20 - (2 * std20)
     
     # ATR (Volatilité en points)
-    high_low = df['High'] - df['Low']
+    high_low = high - low
     atr = high_low.rolling(14).mean()
     
     # Z-Score (Deviation par rapport à la moyenne)
@@ -105,14 +112,17 @@ def calculate_quant_metrics(df, full_data):
     # 2. Corrélations (Rolling 30 periodes)
     # On aligne les données
     corrs = {}
-    ref_ret = df['Close'].pct_change()
+    ref_ret = close.pct_change()
     
     for t in ["^VIX", "^TNX", "BTC-USD", "DX-Y.NYB"]:
         try:
             if t in full_data:
                 asset_ret = full_data[t]['Close'].pct_change()
                 # Correlation glissante
-                corrs[t] = ref_ret.rolling(30).corr(asset_ret).iloc[-1]
+                val = ref_ret.rolling(30).corr(asset_ret).iloc[-1]
+                corrs[t] = 0.0 if np.isnan(val) else val
+            else:
+                corrs[t] = 0.0
         except:
             corrs[t] = 0.0
 
@@ -164,8 +174,14 @@ def get_rss():
 
 data_pack, main_df, sym_name = fetch_and_process_data()
 
-if main_df is not None:
+if not main_df.empty:
     tech_df, correlations = calculate_quant_metrics(main_df, data_pack)
+    
+    # Si calcul échoué (trop peu de data), on évite le crash
+    if tech_df.empty or len(tech_df) < 50:
+         st.error("NOT ENOUGH DATA FOR QUANT METRICS. WAITING FOR MARKET...")
+         st.stop()
+
     current = tech_df.iloc[-1]
     
     # --- HEADER ---
@@ -321,3 +337,6 @@ if main_df is not None:
     if st.button("RUN QUANT DIAGNOSTIC"):
         st.cache_data.clear()
         st.rerun()
+
+else:
+    st.error("DATA FEED DISCONNECTED. PLEASE REFRESH.")
