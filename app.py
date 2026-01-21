@@ -91,6 +91,11 @@ def get_robust_data(ticker_input):
         try:
             # On essaie de télécharger
             df = yf.download(t, period="5d", interval="15m", progress=False)
+            
+            # Nettoyage si MultiIndex (Le fix critique est ici aussi)
+            if isinstance(df.columns, pd.MultiIndex):
+                df = df.xs(t, level=0, axis=1)
+                
             if not df.empty and len(df) > 10:
                 # Si ça marche, on récupère les infos et on retourne
                 try:
@@ -117,20 +122,28 @@ def get_simulated_news():
 
 # --- 4. UI COMPONENTS ---
 def render_metric(label, value, pct_change, is_currency=True):
-    color = "metric-delta-up" if pct_change >= 0 else "metric-delta-dn"
-    sign = "+" if pct_change >= 0 else ""
+    # FIX: On s'assure que pct_change est un float simple, pas une série Pandas
+    try:
+        val_check = float(pct_change)
+    except:
+        val_check = 0.0
+        
+    color = "metric-delta-up" if val_check >= 0 else "metric-delta-dn"
+    sign = "+" if val_check >= 0 else ""
     fmt_val = f"${value:,.2f}" if is_currency else f"{value:,.0f}"
     
     st.markdown(f"""
     <div class="gorilla-card">
         <div class="card-header">{label}</div>
         <div class="metric-value">{fmt_val}</div>
-        <div class="{color}">{sign}{pct_change:.2f}%</div>
+        <div class="{color}">{sign}{val_check:.2f}%</div>
     </div>
     """, unsafe_allow_html=True)
 
 def render_ai_insight(symbol, rsi_val):
-    sentiment = "BULLISH" if rsi_val > 50 else "BEARISH"
+    # FIX: Conversion float explicite pour éviter l'erreur de vérité ambiguë
+    rsi_float = float(rsi_val)
+    sentiment = "BULLISH" if rsi_float > 50 else "BEARISH"
     st.markdown(f"""
     <div class="gorilla-card">
         <div class="card-header">
@@ -142,7 +155,7 @@ def render_ai_insight(symbol, rsi_val):
         </div>
         <div class="ai-bubble">
             <b>AI VERDICT: {sentiment}</b><br>
-            RSI is currently at {rsi_val:.1f}. Volatility analysis suggests a potential breakout zone. 
+            RSI is currently at {rsi_float:.1f}. Volatility analysis suggests a potential breakout zone. 
             Institutional flow detected on the buy-side.
         </div>
     </div>
@@ -180,9 +193,9 @@ with t2:
 df, info, display_name = get_robust_data(target_ticker)
 
 if not df.empty:
-    # Calculations
-    curr = df['Close'].iloc[-1]
-    prev = df['Close'].iloc[-2]
+    # Calculations - FIX CRITIQUE: Conversion explicite en float
+    curr = float(df['Close'].iloc[-1])
+    prev = float(df['Close'].iloc[-2])
     chg = ((curr - prev) / prev) * 100
     
     # RSI
@@ -191,7 +204,7 @@ if not df.empty:
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
     rs = gain / loss
     rsi = 100 - (100 / (1 + rs))
-    last_rsi = rsi.iloc[-1]
+    last_rsi = float(rsi.iloc[-1]) # Force float
 
     # --- TABS LAYOUT (Like Gorilla) ---
     tab1, tab2, tab3 = st.tabs(["TERMINAL", "FUNDAMENTALS", "SUPPLY CHAIN"])
@@ -200,7 +213,7 @@ if not df.empty:
         # ROW 1: KEY METRICS
         c1, c2, c3, c4 = st.columns(4)
         with c1: render_metric("LAST PRICE", curr, chg)
-        with c2: render_metric("VOLUME (24H)", df['Volume'].sum(), 12.5, False)
+        with c2: render_metric("VOLUME (24H)", float(df['Volume'].sum()), 12.5, False)
         with c3: render_metric("AVG TRUE RANGE", 45.20, -2.1, False) # Simulated
         with c4: render_metric("RELATIVE VOL", 1.2, 5.4, False) # Simulated
 
